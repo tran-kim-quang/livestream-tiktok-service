@@ -1,0 +1,37 @@
+services:
+  livestream-service:
+    build: .
+    container_name: livestream-service
+    restart: unless-stopped
+    ports:
+      - "${LIVESTREAM_SERVICE_PORT:-8002}:8002"
+    env_file:
+      - .env
+    environment:
+      # Override REDIS_URL để trỏ đến redis service trong cùng compose network
+      REDIS_URL: redis://redis:6379/0
+    networks:
+      - app-network
+
+  # Redis riêng cho livestream-service
+  # Host port 6380 → container 6379 (tránh xung đột với port 6380 của project agent)
+  # Nếu dùng chung Redis của project agent → xoá block redis này
+  # và thêm livestream-service vào network của project agent
+  redis:
+    image: redis:7-alpine
+    container_name: redis-livestream
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-livestream-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  redis-livestream-data:
