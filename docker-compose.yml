@@ -10,6 +10,9 @@ services:
     environment:
       GPU_LOCAL_HOST: host.docker.internal
       GPU_SSH_KEY: /run/secrets/gpu_ssh_key
+      # Container không có sound device; chạy scripts/audio-bridge.ps1 trên Windows host.
+      AUDIO_PLAYER: none
+      AGENT_LOCAL_PLAYBACK: "0"
     volumes:
       # Đổi GPU_SSH_KEY_HOST_PATH nếu private key nằm ở đường dẫn khác trên host.
       - "${GPU_SSH_KEY_HOST_PATH:-~/.ssh/gpu_voicestudio_ed25519}:/run/secrets/gpu_ssh_key:ro"

@@ -59,9 +59,11 @@ Agent hiện có vẫn gọi `/api/queue/pop` như trước. Mỗi comment chỉ
 
 ## Chọn lọc comment
 
-Comment được xử lý ngay khi nhận từ TikTok, hoàn toàn trong RAM. Service bỏ comment rỗng hoặc chỉ có emoji/dấu câu, quá ngắn/dài, chứa URL, trùng nội dung gần đây, gửi quá nhanh từ cùng người dùng, hoặc chứa từ trong blocklist. So sánh duplicate và blocklist không phân biệt hoa thường/dấu tiếng Việt, rút gọn ký tự lặp và khoảng trắng.
+Comment được xử lý ngay khi nhận từ TikTok, hoàn toàn trong RAM. Service bỏ comment rỗng hoặc chỉ có emoji/dấu câu, quá ngắn/dài, chứa URL, trùng nội dung gần đây, hoặc chứa từ trong `COMMENT_BLOCKLIST`. Blocklist mặc định rỗng: comment thô tục không tự động bị bỏ; chỉ các từ/cụm từ được cấu hình làm hard ban mới bị loại. So sánh duplicate và blocklist không phân biệt hoa thường/dấu tiếng Việt, rút gọn ký tự lặp và khoảng trắng.
 
-Comment hợp lệ được cộng điểm khi có dấu hiệu câu hỏi tiếng Việt, nội dung có ý nghĩa dài hơn, nhắc streamer hoặc chứa `COMMENT_PRIORITY_KEYWORDS`. `/api/queue/pop` chọn điểm cao nhất trong cửa sổ mới; bằng điểm thì chọn comment đến sau. Comment khác vẫn được giữ và mỗi comment chỉ phục vụ một lần. Tăng/giảm các biến `COMMENT_*` để điều chỉnh theo tốc độ live; đặt `COMMENT_MAX_SERVE_PER_SEC=0` để không giới hạn tốc độ agent lấy comment.
+Các comment chưa được trả lời của cùng user được gộp trong `COMMENT_MERGE_WINDOW_SEC`, tối đa `COMMENT_MERGE_MAX_PARTS` phần và không vượt `COMMENT_MAX_CHARS`. Ví dụ `saberg_6` gửi “sao troll rồi”, rồi 4 giây sau gửi “trả giá vì troll rồi” thì queue giữ một bản ghi `sao troll rồi. trả giá vì troll rồi`, kèm `parts`, `msg_ids` và `merged`.
+
+Comment hợp lệ được cộng điểm khi có dấu hiệu câu hỏi tiếng Việt, nội dung có ý nghĩa dài hơn, nhắc streamer hoặc chứa `COMMENT_PRIORITY_KEYWORDS`. `/api/queue/pop` chọn điểm cao nhất trong cửa sổ mới; bằng điểm thì chọn comment đến sau. Sau khi một user được phục vụ, comment tiếp theo của họ vẫn nằm trong buffer nhưng được tạm bỏ qua trong `COMMENT_USER_COOLDOWN_SEC`, để user khác có cơ hội được trả lời; hết cooldown comment tự đủ điều kiện trở lại nếu vẫn còn mới. Mỗi bản ghi chỉ phục vụ một lần. Đặt `COMMENT_MAX_SERVE_PER_SEC=0` để không giới hạn tốc độ agent lấy comment.
 
 ## Tích hợp agent
 
@@ -83,6 +85,185 @@ if not data["empty"]:
         sender=comment["user"]["nickname"],
     )
 ```
+
+## Agent trả lời comment
+
+Khi có `LLM_API_KEY`, service bật agent dùng API OpenAI-compatible tại
+`{LLM_BASE_URL}/chat/completions` (không dùng OpenAI SDK). Có thể ghi đè
+system prompt bằng `AGENT_SYSTEM_PROMPT` hoặc file `AGENT_PROMPT_FILE`.
+Prompt mặc định yêu cầu vẫn trả lời comment thô tục, chửi bậy hoặc khiêu khích
+một cách lịch sự, bình tĩnh và hài hước nhẹ nhàng, không lặp lại lời tục hay
+đáp trả gay gắt; có thể lái câu trả lời về nội dung buổi live.
+
+```bash
+curl -X POST http://localhost:8002/api/agent/reply \
+  -H 'Content-Type: application/json' \
+  -d '{"comment":"Hôm nay có sản phẩm gì?","nickname":"Lan"}'
+
+curl -N -X POST http://localhost:8002/api/agent/speak \
+  -H 'Content-Type: application/json' \
+  -d '{"comment":"Chào mọi người đi","nickname":"Lan","format":"pcm"}' \
+  --output agent_reply.pcm
+```
+
+API gồm `GET /api/agent/status`, `POST /api/agent/reply`,
+`GET /api/agent/replies`, `WS /api/agent/ws`, `POST /api/agent/speak` và
+`POST /api/agent/audio/stop`.
+Endpoint `speak` nhận token LLM song song với việc tổng hợp các chunk TTS đã
+hoàn chỉnh, nhằm giảm thời gian tới audio đầu tiên.
+
+Mặc định `AGENT_GREETING=1`: service lấy display name TikTok (`nickname`, không
+dùng `@handle`/ID), chuẩn hoá NFKC rồi bỏ emoji, ký hiệu trang trí và ký tự
+zero-width trước khi tạo lời chào ngắn như `Saber ơi,`. Tên được giới hạn 3
+từ/24 ký tự; nickname rỗng sau khi làm sạch sẽ fallback sang `unique_id`, rồi
+`bạn`. Các mẫu trong `AGENT_GREETING_TEMPLATES` phân cách bằng `|` và không lặp
+lại ngay hai lần liên tiếp.
+
+Greeting được đưa vào TTS ngay khi bắt đầu request, song song lúc chờ LLM; chunk
+LLM đầu tiên cũng dùng cấu hình TTS nhanh. PCM greeting chỉ được gửi/phát sau
+delta LLM đầu tiên, nên reply LLM rỗng vẫn bị bỏ hoàn toàn. Vì vậy thời gian tới
+audio đầu tiên xấp xỉ giá trị lớn hơn giữa TTS greeting và token LLM đầu, thay vì
+tổng của hai khoảng này. Reply trả về/lưu/broadcast gồm greeting + nội dung LLM,
+nhưng history gửi lại LLM chỉ lưu nội dung LLM để model không học cách chào lại.
+
+Agent có hai auto mode khi `AGENT_AUTO=1`:
+
+- `AGENT_AUTO_SPEAK=1` (mặc định): comment → LLM streaming → TTS theo chunk →
+  raw PCM qua `WS /api/agent/ws`. Chế độ này chỉ hoạt động khi TTS bật; nếu TTS
+  tắt, service ghi warning và tự lùi về text-only.
+- `AGENT_AUTO_SPEAK=0`: lưu reply và gửi JSON `{"type":"reply", ...}` như
+  trước, không gọi TTS.
+
+Khi `AGENT_AUTO=1`, service là **consumer duy nhất** của comment buffer và
+`GET /api/queue/pop` trả HTTP 409. Không gọi endpoint pop từ agent ngoài ở chế
+độ này. Mặc định `AGENT_SKIP_WHEN_NO_LISTENER=1`: khi chưa có WebSocket listener
+**và** local player không hoạt động, service không lấy comment và không gọi
+LLM/TTS; comment còn nguyên trong buffer rồi hết hạn tự nhiên. Đặt bằng `0` nếu
+muốn agent vẫn sinh và lưu reply phục vụ stats dù không có listener.
+
+Mỗi spoken reply trên WebSocket có thứ tự frame cố định:
+
+1. JSON text `{"type":"reply_start","id":"...","comment":{...},"format":"pcm","sample_rate":24000,"channels":1,"sample_format":"s16le"}`.
+2. Một hoặc nhiều binary frame raw PCM s16le 24 kHz mono, gửi ngay khi từng chunk TTS xong.
+3. JSON text `{"type":"reply_end","id":"...","reply":"...","latency_ms":{"llm_first_token":120,"greeting_ready":760,"first_audio":780,"first_audio_played":781,"total":1450},"audio_sec":2.1}`.
+
+Nếu lỗi giữa reply, service gửi `{"type":"reply_error","id":"...","error":"..."}`
+rồi tiếp tục comment kế. Reply LLM rỗng bị bỏ qua, không có `reply_start` hay
+audio. Client quá chậm làm đầy queue sẽ bị đóng kết nối để không mất âm thanh
+giữa reply.
+
+Client tối thiểu (cài package `websockets` riêng nếu môi trường chưa có):
+
+```python
+import asyncio, json, websockets
+
+async def main():
+    async with websockets.connect("ws://127.0.0.1:8002/api/agent/ws") as ws:
+        with open("agent.pcm", "wb") as output:
+            async for frame in ws:
+                if isinstance(frame, bytes):
+                    output.write(frame)
+                else:
+                    print(json.loads(frame))
+
+asyncio.run(main())
+```
+
+## Docker + phát âm thanh trên Windows (audio bridge)
+
+Container Docker không có sound device của Windows. Service vì vậy chỉ sinh và
+gửi PCM; một process Python nhỏ chạy native trên host nhận PCM qua WebSocket và
+phát bằng player `sounddevice`/`ffplay` có sẵn trong project:
+
+```text
+TikTok → service Docker :8002 → WS /api/agent/ws → audio bridge Windows → loa/headset
+             LLM + TTS            PCM + reply_end       played ACK
+```
+
+Compose đã đặt `AUDIO_PLAYER=none` và `AGENT_LOCAL_PLAYBACK=0`, nên image không
+mở audio và không cần cài `sounddevice`. Khởi động service, sau đó mở terminal
+PowerShell thứ hai trên Windows:
+
+```powershell
+docker compose up --build
+scripts\audio-bridge.ps1
+```
+
+Script tạo `.venv-bridge`, cài `requirements-bridge.txt` một lần rồi chạy bridge.
+Có thể dùng wrapper `scripts\audio-bridge.bat`, hoặc cài dependencies và chạy tay:
+
+```powershell
+python -m pip install -r requirements-bridge.txt
+python -m app.audio.bridge --url ws://127.0.0.1:8002/api/agent/ws
+```
+
+Chọn thiết bị bằng index hoặc một phần tên, và có thể buộc backend:
+
+```powershell
+python -m app.audio.bridge --device "Speakers" --backend sounddevice --name may-live
+python -c "import sounddevice as sd; print(sd.query_devices())"
+```
+
+Bridge gửi `hello` với role `player`. Sau mỗi `reply_end`, bridge chờ player phát
+thật sự xong (`drain`) rồi gửi ACK `played`; auto loop chỉ lấy comment kế sau ACK
+và `AGENT_REPLY_GAP_SEC`. Timeout là độ dài PCM cộng
+`AGENT_PLAYED_ACK_GRACE_SEC` (mặc định 3 giây), nên bridge lỗi không làm loop kẹt.
+`GET /api/agent/status` hiển thị riêng `listeners`, `players` và latency audio đầu
+của bridge.
+
+Nếu không có tiếng, kiểm tra bridge còn báo “Đã kết nối”, volume của Windows và
+output device; thử `--device` với index chính xác. Nếu `sounddevice`/PortAudio
+không mở được thiết bị, cài `ffplay` vào `PATH` rồi dùng `--backend ffplay`.
+Kết nối dùng `127.0.0.1`, nên thông thường không cần rule firewall; nếu đổi URL
+sang IP LAN thì mới cần kiểm tra firewall/port 8002.
+
+Khi chạy service native (không Docker), `AGENT_LOCAL_PLAYBACK=1` và
+`AUDIO_PLAYER=auto` vẫn phát trực tiếp như trước, không cần audio bridge.
+
+Sau `reply_end`, loop gọi `drain()` khi phát local, chờ ACK khi có bridge (hoặc
+ước lượng phần audio client chưa phát xong nếu chỉ có WebSocket), rồi chờ thêm `AGENT_REPLY_GAP_SEC`
+(mặc định 0,6 giây), rồi mới chọn comment mới/điểm cao nhất lúc đó. Budget quan
+sát gồm `llm_first_token` (provider bắt đầu trả token), `first_audio` (binary đầu
+sẵn sàng), `greeting_ready` (PCM greeting tổng hợp xong), `first_audio_played`
+(chunk đầu được giao cho local player) và `total`
+(sinh toàn bộ reply); thời gian phát audio không nằm trong `total` mà thể hiện
+bằng `audio_sec`. Dùng
+`python test/test_agent_ws.py --play` để vừa xem event/timing, lưu `OUT` PCM và
+pipe binary frame sang ffplay.
+
+### Phát âm thanh trên máy local
+
+Khi `AGENT_LOCAL_PLAYBACK=1` (mặc định), auto-speak phát từng chunk ngay trên
+loa/headset của **máy đang chạy service**, đồng thời vẫn broadcast PCM qua
+WebSocket. Nên chạy service native trên Windows để dùng sound device; container
+Compose đặt `AUDIO_PLAYER=none` vì không có thiết bị audio.
+
+`AUDIO_PLAYER=auto` ưu tiên `sounddevice`, sau đó fallback sang `ffplay` trên
+`PATH`; cũng có thể chọn thẳng `sounddevice`, `ffplay` hoặc `none`.
+`AUDIO_OUTPUT_DEVICE` nhận index hoặc một phần tên thiết bị không phân biệt hoa
+thường; để trống sẽ dùng output mặc định. Liệt kê thiết bị bằng:
+
+```bash
+python -c "import sounddevice as sd; print(sd.query_devices())"
+```
+
+Nếu thiết bị không nhận PCM 24 kHz, backend `sounddevice` tự mở ở sample rate
+mặc định của thiết bị và resample. Kiểm tra nhanh bằng
+`python test/test_local_play.py --tone`, hoặc gọi service:
+
+```bash
+curl -X POST http://localhost:8002/api/agent/speak \
+  -H 'Content-Type: application/json' \
+  -d '{"comment":"Nói một câu để kiểm tra loa","play_local":true}'
+
+curl -X POST http://localhost:8002/api/agent/audio/stop
+```
+
+Request `play_local=true` trả JSON ngay sau khi tổng hợp/enqueue xong, không chờ
+loa phát hết. Endpoint `audio/stop` dừng phần đang phát và xóa hàng đợi (barge-in).
+`GET /api/agent/status` hiển thị backend, device, trạng thái và số giây đang đợi.
+Khi không chạy auto-speak, đặt rõ `AUDIO_PLAYER=auto`, `sounddevice` hoặc
+`ffplay` để player được mở sẵn cho request `play_local`.
 
 ## Cấu hình GPU
 
@@ -161,12 +342,17 @@ python test/test_tts_stream.py --play
 | `COMMENT_MIN_CHARS` | `2` | Số chữ/số tối thiểu sau khi bỏ emoji/dấu câu |
 | `COMMENT_MAX_CHARS` | `300` | Độ dài comment tối đa |
 | `COMMENT_DEDUP_WINDOW_SEC` | `60` | Cửa sổ loại nội dung trùng từ mọi user |
-| `COMMENT_USER_COOLDOWN_SEC` | `10` | Cooldown giữa comment hợp lệ của cùng user |
-| `COMMENT_BLOCKLIST` | rỗng | Từ/cụm từ chặn, phân cách bằng dấu phẩy |
+| `COMMENT_SKIP_BACKLOG` | `1` | Bỏ comment cũ TikTok gửi lại lúc kết nối (tạo trước lúc service kết nối) |
+| `COMMENT_BACKLOG_SLACK_SEC` | `2` | Độ lệch đồng hồ cho phép khi so `create_time` với lúc kết nối |
+| `COMMENT_MSG_ID_TTL_SEC` | `600` | Thời gian ghi nhớ TikTok message ID để loại replay |
+| `COMMENT_USER_COOLDOWN_SEC` | `8` | Cooldown của user sau khi comment được lấy để trả lời |
+| `COMMENT_MERGE_WINDOW_SEC` | `10` | Cửa sổ gộp comment chưa được trả lời của cùng user |
+| `COMMENT_MERGE_MAX_PARTS` | `3` | Số phần tối đa trong một comment đã gộp |
+| `COMMENT_BLOCKLIST` | rỗng | Hard ban: từ/cụm từ làm comment bị bỏ, phân cách bằng dấu phẩy |
 | `COMMENT_PRIORITY_KEYWORDS` | rỗng | Từ/cụm từ được cộng điểm, phân cách bằng dấu phẩy |
 | `COMMENT_BUFFER_SIZE` | `50` | Số comment hợp lệ tối đa giữ trong RAM |
 | `COMMENT_MAX_AGE_SEC` | `30` | Tuổi tối đa trước khi loại khỏi buffer |
-| `COMMENT_FRESH_WINDOW_SEC` | `10` | Cửa sổ comment đủ mới để `/queue/pop` chọn |
+| `COMMENT_FRESH_WINDOW_SEC` | `15` | Cửa sổ comment đủ mới để `/queue/pop` chọn |
 | `COMMENT_MAX_SERVE_PER_SEC` | `0` | Giới hạn lượt pop mỗi giây; `0` là không giới hạn |
 | `GPU_HOST` | `local` | `local`, IP LAN/Tailscale hoặc hostname GPU |
 | `GPU_NAME` | rỗng | Tên hiển thị máy GPU trong log/health |
@@ -187,4 +373,28 @@ python test/test_tts_stream.py --play
 | `TTS_NUM_STEP` | rỗng | `num_step` gửi tới OmniVoice; rỗng dùng mặc định engine |
 | `TTS_MAX_CONCURRENCY` | `1` | Số request TTS song song, bảo vệ GPU dùng chung |
 | `TTS_TIMEOUT_SEC` | `120` | Timeout gọi VoiceStudio (giây) |
+| `AUDIO_PLAYER` | `auto` | Local backend: `auto`, `sounddevice`, `ffplay` hoặc `none` |
+| `AUDIO_OUTPUT_DEVICE` | rỗng | Index/phần tên output device; rỗng dùng system default |
+| `BRIDGE_WS_URL` | `ws://127.0.0.1:8002/api/agent/ws` | URL service cho audio bridge native |
+| `AGENT_LOCAL_PLAYBACK` | `true` | Phát auto-speak trên máy chạy service, song song WebSocket |
+| `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL API OpenAI-compatible |
+| `LLM_API_KEY` | rỗng | Bearer key; rỗng thì agent tắt |
+| `LLM_MODEL_NAME` | `gpt-4o-mini` | Model chat completions (fallback `LLM_MODEL`) |
+| `LLM_TIMEOUT_SEC` | `30` | Timeout mỗi request LLM |
+| `LLM_MAX_TOKENS` | `150` | Giới hạn token câu trả lời |
+| `LLM_TEMPERATURE` | `0.7` | Temperature gửi provider |
+| `LLM_MAX_RPS` | `60` | Giới hạn request LLM mỗi giây |
+| `LLM_MAX_CONCURRENCY` | `2` | Số request LLM song song |
+| `AGENT_ENABLED` | `true` | Đặt `false` để buộc tắt agent |
+| `AGENT_AUTO` | `false` | Tự consume comment queue và broadcast reply |
+| `AGENT_AUTO_SPEAK` | `true` | Auto mode stream LLM → TTS → PCM qua WebSocket; cần TTS bật |
+| `AGENT_GREETING` | `true` | Service tạo greeting ngắn và tổng hợp song song khi chờ LLM |
+| `AGENT_GREETING_TEMPLATES` | `{name} ơi,\|Chào {name},\|À {name},` | Các mẫu greeting phân cách bằng `|`, tránh lặp mẫu liền nhau |
+| `AGENT_SKIP_WHEN_NO_LISTENER` | `true` | Không consume comment/call LLM khi chưa có WS listener |
+| `AGENT_REPLY_GAP_SEC` | `0.6` | Khoảng nghỉ sau khi client phát xong mỗi reply |
+| `AGENT_PLAYED_ACK_GRACE_SEC` | `3` | Thời gian grace ngoài `audio_sec` để chờ bridge ACK `played` |
+| `AGENT_SYSTEM_PROMPT` | rỗng | System prompt ghi đè trực tiếp |
+| `AGENT_PROMPT_FILE` | rỗng | File system prompt, dùng khi prompt trực tiếp rỗng |
+| `AGENT_HISTORY_TURNS` | `6` | Số cặp comment/reply giữ làm ngữ cảnh |
+| `AGENT_REPLY_BUFFER` | `50` | Số reply gần đây giữ trong RAM |
 | `LIVESTREAM_SERVICE_PORT` | `8002` | Port expose ra ngoài |

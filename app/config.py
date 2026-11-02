@@ -22,8 +22,22 @@ COMMENT_MAX_CHARS: int = max(1, int(os.environ.get("COMMENT_MAX_CHARS", "300")))
 COMMENT_DEDUP_WINDOW_SEC: float = max(
     0.0, float(os.environ.get("COMMENT_DEDUP_WINDOW_SEC", "60"))
 )
+# Bỏ comment TikTok gửi lại từ trước lúc kết nối (backlog), cho phép lệch đồng hồ N giây
+COMMENT_SKIP_BACKLOG = _truthy("COMMENT_SKIP_BACKLOG", True)
+COMMENT_BACKLOG_SLACK_SEC: float = max(
+    0.0, float(os.environ.get("COMMENT_BACKLOG_SLACK_SEC", "2"))
+)
+COMMENT_MSG_ID_TTL_SEC: float = max(
+    0.0, float(os.environ.get("COMMENT_MSG_ID_TTL_SEC", "600"))
+)
 COMMENT_USER_COOLDOWN_SEC: float = max(
-    0.0, float(os.environ.get("COMMENT_USER_COOLDOWN_SEC", "10"))
+    0.0, float(os.environ.get("COMMENT_USER_COOLDOWN_SEC", "8"))
+)
+COMMENT_MERGE_WINDOW_SEC: float = max(
+    0.0, float(os.environ.get("COMMENT_MERGE_WINDOW_SEC", "10"))
+)
+COMMENT_MERGE_MAX_PARTS: int = max(
+    1, int(os.environ.get("COMMENT_MERGE_MAX_PARTS", "3"))
 )
 COMMENT_BLOCKLIST: tuple[str, ...] = tuple(
     value.strip() for value in os.environ.get("COMMENT_BLOCKLIST", "").split(",") if value.strip()
@@ -36,7 +50,7 @@ COMMENT_PRIORITY_KEYWORDS: tuple[str, ...] = tuple(
 COMMENT_BUFFER_SIZE: int = max(1, int(os.environ.get("COMMENT_BUFFER_SIZE", "50")))
 COMMENT_MAX_AGE_SEC: float = max(0.0, float(os.environ.get("COMMENT_MAX_AGE_SEC", "30")))
 COMMENT_FRESH_WINDOW_SEC: float = max(
-    0.0, float(os.environ.get("COMMENT_FRESH_WINDOW_SEC", "10"))
+    0.0, float(os.environ.get("COMMENT_FRESH_WINDOW_SEC", "15"))
 )
 COMMENT_MAX_SERVE_PER_SEC: float = max(
     0.0, float(os.environ.get("COMMENT_MAX_SERVE_PER_SEC", "0"))
@@ -76,3 +90,56 @@ TTS_VOICE_ID: str = os.environ.get("TTS_VOICE_ID", "")
 TTS_TIMEOUT_SEC: float = float(os.environ.get("TTS_TIMEOUT_SEC", "120"))
 # Số request TTS chạy song song tới GPU (GPU dùng chung với job render video)
 TTS_MAX_CONCURRENCY: int = max(1, int(os.environ.get("TTS_MAX_CONCURRENCY", "1")))
+
+# ── Phát audio trên máy local ─────────────────────────────────────────────────
+AUDIO_PLAYER_EXPLICIT: bool = "AUDIO_PLAYER" in os.environ
+AUDIO_PLAYER: str = os.environ.get("AUDIO_PLAYER", "auto").strip().lower()
+AUDIO_OUTPUT_DEVICE: str = os.environ.get("AUDIO_OUTPUT_DEVICE", "").strip()
+AGENT_LOCAL_PLAYBACK: bool = _truthy("AGENT_LOCAL_PLAYBACK", True)
+
+# ── Agent / LLM ──────────────────────────────────────────────────────────
+def _openai_base_url(url: str) -> str:
+    """Chuẩn hoá về base URL kiểu OpenAI (…/v1); service tự nối /chat/completions."""
+    url = url.strip().rstrip("/")
+    if url.endswith("/chat/completions"):
+        url = url[: -len("/chat/completions")]
+    # API gốc của Ollama (/api/chat) không theo chuẩn OpenAI → dùng /v1 của cùng host
+    for native in ("/api/chat", "/api"):
+        if url.endswith(native):
+            url = url[: -len(native)] + "/v1"
+            break
+    return url
+
+
+LLM_BASE_URL: str = _openai_base_url(os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1"))
+LLM_API_KEY: str = os.environ.get("LLM_API_KEY", "").strip()
+LLM_MODEL: str = (
+    os.environ.get("LLM_MODEL_NAME") or os.environ.get("LLM_MODEL") or "gpt-4o-mini"
+).strip()
+LLM_TIMEOUT_SEC: float = max(0.1, float(os.environ.get("LLM_TIMEOUT_SEC", "30")))
+LLM_MAX_TOKENS: int = max(1, int(os.environ.get("LLM_MAX_TOKENS", "150")))
+LLM_TEMPERATURE: float = float(os.environ.get("LLM_TEMPERATURE", "0.7"))
+LLM_MAX_RPS: float = max(0.0, float(os.environ.get("LLM_MAX_RPS", "60")))
+LLM_MAX_CONCURRENCY: int = max(1, int(os.environ.get("LLM_MAX_CONCURRENCY", "2")))
+AGENT_ENABLED: bool = _truthy("AGENT_ENABLED", True)
+AGENT_AUTO: bool = _truthy("AGENT_AUTO", False)
+AGENT_AUTO_SPEAK: bool = _truthy("AGENT_AUTO_SPEAK", True)
+AGENT_GREETING: bool = _truthy("AGENT_GREETING", True)
+AGENT_GREETING_TEMPLATES: tuple[str, ...] = tuple(
+    value.strip()
+    for value in os.environ.get(
+        "AGENT_GREETING_TEMPLATES", "{name} ơi,|Chào {name},|À {name},"
+    ).split("|")
+    if value.strip()
+) or ("{name} ơi,",)
+AGENT_SKIP_WHEN_NO_LISTENER: bool = _truthy("AGENT_SKIP_WHEN_NO_LISTENER", True)
+AGENT_REPLY_GAP_SEC: float = max(
+    0.0, float(os.environ.get("AGENT_REPLY_GAP_SEC", "0.6"))
+)
+AGENT_PLAYED_ACK_GRACE_SEC: float = max(
+    0.0, float(os.environ.get("AGENT_PLAYED_ACK_GRACE_SEC", "3"))
+)
+AGENT_SYSTEM_PROMPT: str = os.environ.get("AGENT_SYSTEM_PROMPT", "").strip()
+AGENT_PROMPT_FILE: str = os.environ.get("AGENT_PROMPT_FILE", "").strip()
+AGENT_HISTORY_TURNS: int = max(0, int(os.environ.get("AGENT_HISTORY_TURNS", "6")))
+AGENT_REPLY_BUFFER: int = max(1, int(os.environ.get("AGENT_REPLY_BUFFER", "50")))

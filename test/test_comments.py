@@ -14,6 +14,8 @@ from app.api.deps import get_comments, get_hub, get_tts
 from app.comments.buffer import CommentBuffer
 from app.comments.filters import CommentFilter, normalize_text
 from app.comments.scoring import score
+from app.live.hub import _comment_to_dict
+from types import SimpleNamespace
 
 
 class FakeClock:
@@ -27,12 +29,15 @@ class FakeClock:
         self.value += seconds
 
 
-def payload(text: str, user: str = "u1", streamer: str = "host") -> dict[str, Any]:
+def payload(
+    text: str, user: str = "u1", streamer: str = "host", msg_id: str | None = None
+) -> dict[str, Any]:
     return {
         "comment": text,
         "user": {"id": user, "nickname": user, "unique_id": user},
         "streamer_unique_id": streamer,
         "room_id": 123,
+        "msg_id": msg_id,
     }
 
 
@@ -55,6 +60,21 @@ class CommentFilterTest(unittest.TestCase):
     def test_too_long(self) -> None:
         self.assertEqual(self.make_filter(max_chars=5).drop_reason(payload("abcdef")), "too_long")
 
+    def test_backlog_before_connect_dropped(self) -> None:
+        started = 1_000_000
+        old = {**payload("comment cũ", user="u7"), "create_time": started - 600_000,
+               "session_started_at": started}
+        fresh = {**payload("comment mới", user="u7"), "create_time": started + 500,
+                 "session_started_at": started}
+        lag = {**payload("lệch đồng hồ", user="u8"), "create_time": started - 1_000,
+               "session_started_at": started}
+        comment_filter = self.make_filter()
+        self.assertEqual(comment_filter.drop_reason(old), "backlog")
+        # backlog không kích hoạt cooldown của user đó
+        self.assertIsNone(comment_filter.drop_reason(fresh))
+        self.assertIsNone(comment_filter.drop_reason(lag))
+        self.assertIsNone(self.make_filter(skip_backlog=False).drop_reason(old))
+
     def test_mention_kept(self) -> None:
         # Người xem hay chèn @ để comment không bị TikTok ẩn → không lọc tag
         self.assertIsNone(self.make_filter().drop_reason(payload("@host @ban")))
@@ -67,20 +87,46 @@ class CommentFilterTest(unittest.TestCase):
         comment_filter = CommentFilter(clock=self.clock, blocklist=("Đồ ngu",))
         self.assertEqual(comment_filter.drop_reason(payload("BAN DO NGU!")), "blocklist")
 
+    def test_tho_tuc_khong_bi_loai_khi_blocklist_rong(self) -> None:
+        self.assertIsNone(self.make_filter().drop_reason(payload("đồ ngu, nói tiếp đi")))
+
     def test_duplicate_chuan_hoa_dau_va_ky_tu_lap(self) -> None:
-        comment_filter = self.make_filter(dedup_window_sec=60, user_cooldown_sec=0)
+        comment_filter = self.make_filter(dedup_window_sec=60)
         self.assertIsNone(comment_filter.drop_reason(payload("Hayyyyy quá", "u1")))
         self.assertEqual(comment_filter.drop_reason(payload("HÂY QUÁ", "u2")), "duplicate")
         self.clock.advance(60)
         self.assertIsNone(comment_filter.drop_reason(payload("hay quá", "u3")))
 
-    def test_cooldown_theo_user(self) -> None:
-        comment_filter = self.make_filter(dedup_window_sec=0, user_cooldown_sec=10)
+    def test_khong_cooldown_theo_thoi_diem_nhan(self) -> None:
+        comment_filter = self.make_filter(dedup_window_sec=0)
         self.assertIsNone(comment_filter.drop_reason(payload("câu đầu", "u1")))
-        self.assertEqual(comment_filter.drop_reason(payload("câu khác", "u1")), "user_cooldown")
+        self.assertIsNone(comment_filter.drop_reason(payload("câu khác", "u1")))
         self.assertIsNone(comment_filter.drop_reason(payload("câu khác", "u2")))
-        self.clock.advance(10)
-        self.assertIsNone(comment_filter.drop_reason(payload("đã chờ đủ", "u1")))
+
+    def test_trung_msg_id(self) -> None:
+        comment_filter = self.make_filter(msg_id_ttl_sec=600, dedup_window_sec=0)
+        self.assertIsNone(comment_filter.drop_reason(payload("câu đầu", "u1", msg_id="99")))
+        self.clock.advance(9)
+        self.assertEqual(
+            comment_filter.drop_reason(payload("câu đầu", "u1", msg_id="99")),
+            "duplicate_id",
+        )
+        self.clock.advance(1)
+        self.assertIsNone(comment_filter.drop_reason(payload("câu mới", "u1", msg_id="100")))
+
+    def test_replay_id_khong_anh_huong_user_khac(self) -> None:
+        comment_filter = self.make_filter(msg_id_ttl_sec=600, dedup_window_sec=0)
+        self.assertIsNone(comment_filter.drop_reason(payload("câu đầu", "u1", msg_id="99")))
+        self.assertEqual(
+            comment_filter.drop_reason(payload("bản replay", "u2", msg_id="99")),
+            "duplicate_id",
+        )
+        self.assertIsNone(comment_filter.drop_reason(payload("câu riêng", "u2", msg_id="100")))
+
+    def test_thieu_msg_id_dung_hanh_vi_cu(self) -> None:
+        comment_filter = self.make_filter(dedup_window_sec=60)
+        self.assertIsNone(comment_filter.drop_reason(payload("giống nhau", "u1")))
+        self.assertEqual(comment_filter.drop_reason(payload("GIỐNG NHAU", "u2")), "duplicate")
 
     def test_normalize_text(self) -> None:
         self.assertEqual(normalize_text("  HAYYYYY   ĐẤY  "), "hay day")
@@ -96,6 +142,24 @@ class CommentScoringTest(unittest.TestCase):
         self.assertGreater(boosted, base)
 
 
+class CommentPayloadTest(unittest.TestCase):
+    def test_lay_msg_id_tu_common_proto(self) -> None:
+        client = SimpleNamespace(room_id=123, unique_id="host")
+        event = SimpleNamespace(
+            comment="Xin chào", common=SimpleNamespace(msg_id=987654321),
+            user=SimpleNamespace(id="1", nickname="Lan", unique_id="lan"),
+        )
+        self.assertEqual(_comment_to_dict(client, event)["msg_id"], "987654321")
+
+    def test_common_thieu_thi_msg_id_none(self) -> None:
+        client = SimpleNamespace(room_id=123, unique_id="host")
+        event = SimpleNamespace(
+            comment="Xin chào", common=None,
+            user=SimpleNamespace(id="1", nickname="Lan", unique_id="lan"),
+        )
+        self.assertIsNone(_comment_to_dict(client, event)["msg_id"])
+
+
 class CommentBufferTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.clock = FakeClock()
@@ -105,9 +169,83 @@ class CommentBufferTest(unittest.IsolatedAsyncioTestCase):
             clock=self.clock,
             blocklist=(),
             dedup_window_sec=0,
-            user_cooldown_sec=0,
         )
+        kwargs.setdefault("user_cooldown_sec", 0)
+        kwargs.setdefault("merge_window_sec", 0)
         return CommentBuffer(comment_filter=comment_filter, clock=self.clock, **kwargs)
+
+    async def test_gop_hai_comment_cung_user_va_lam_moi_timestamp(self) -> None:
+        buffer = self.make_buffer(
+            merge_window_sec=10, merge_max_parts=3, fresh_window_sec=5, max_age_sec=20
+        )
+        await buffer.add(payload("sao troll rồi", "saberg_6", msg_id="1"))
+        self.clock.advance(4)
+        await buffer.add(payload("trả giá vì troll rồi", "saberg_6", msg_id="2"))
+        self.clock.advance(4)
+        merged = await buffer.next()
+        self.assertEqual(merged["comment"], "sao troll rồi. trả giá vì troll rồi")
+        self.assertEqual(merged["parts"], ["sao troll rồi", "trả giá vì troll rồi"])
+        self.assertEqual(merged["msg_ids"], ["1", "2"])
+        self.assertEqual(merged["msg_id"], "1")
+        self.assertEqual(merged["merged"], 2)
+        self.assertEqual((await buffer.stats())["merged"], 1)
+
+    async def test_phan_thu_tu_sau_max_parts_tao_record_moi(self) -> None:
+        buffer = self.make_buffer(merge_window_sec=10, merge_max_parts=3)
+        for index, text in enumerate(("phần một", "phần hai", "phần ba", "phần bốn"), 1):
+            await buffer.add(payload(text, "u1", msg_id=str(index)))
+            self.clock.advance(1)
+        latest = await buffer.latest()
+        self.assertEqual([item["comment"] for item in latest], [
+            "phần bốn", "phần một. phần hai. phần ba",
+        ])
+
+    async def test_ngoai_window_va_khac_user_khong_gop(self) -> None:
+        buffer = self.make_buffer(merge_window_sec=10)
+        await buffer.add(payload("câu đầu", "u1"))
+        self.clock.advance(11)
+        await buffer.add(payload("quá cửa sổ", "u1"))
+        await buffer.add(payload("user khác", "u2"))
+        self.assertEqual(len(await buffer.latest()), 3)
+        self.assertTrue(all("merged" not in item for item in await buffer.latest()))
+
+    async def test_record_da_served_khong_duoc_gop(self) -> None:
+        buffer = self.make_buffer(merge_window_sec=10)
+        await buffer.add(payload("câu đã trả lời", "u1"))
+        self.assertEqual((await buffer.next())["comment"], "câu đã trả lời")
+        await buffer.add(payload("câu gửi sau", "u1"))
+        latest = await buffer.latest()
+        self.assertEqual([item["comment"] for item in latest], ["câu gửi sau"])
+        self.assertNotIn("merged", latest[0])
+
+    async def test_cooldown_tinh_tu_luc_served_va_nhuong_user_khac(self) -> None:
+        scores = {"A đầu": 10, "A tiếp": 9, "B thấp": 1}
+        buffer = self.make_buffer(
+            user_cooldown_sec=10, scorer=lambda item: scores[str(item["comment"])]
+        )
+        await buffer.add(payload("A đầu", "A"))
+        self.assertEqual((await buffer.next())["comment"], "A đầu")
+        await buffer.add(payload("A tiếp", "a"))
+        await buffer.add(payload("B thấp", "B"))
+        self.assertEqual((await buffer.next())["comment"], "B thấp")
+        self.clock.advance(10)
+        self.assertEqual((await buffer.next())["comment"], "A tiếp")
+        self.assertEqual((await buffer.stats())["skipped_user_cooldown"], 1)
+
+    async def test_all_in_cooldown_cho_den_khi_het(self) -> None:
+        buffer = CommentBuffer(
+            comment_filter=CommentFilter(blocklist=(), dedup_window_sec=0),
+            user_cooldown_sec=0.03,
+            merge_window_sec=0,
+            fresh_window_sec=1,
+            max_age_sec=1,
+        )
+        await buffer.add(payload("câu đầu", "u1"))
+        await buffer.next()
+        await buffer.add(payload("câu tiếp", "u1"))
+        started = time.perf_counter()
+        self.assertEqual((await buffer.next(timeout=0.2))["comment"], "câu tiếp")
+        self.assertGreaterEqual(time.perf_counter() - started, 0.02)
 
     async def test_best_pick_va_moi_comment_chi_served_mot_lan(self) -> None:
         buffer = self.make_buffer()
@@ -177,7 +315,8 @@ class FakeHub:
 class CommentApiTest(unittest.TestCase):
     def setUp(self) -> None:
         self.buffer = CommentBuffer(
-            comment_filter=CommentFilter(blocklist=(), dedup_window_sec=0, user_cooldown_sec=0)
+            comment_filter=CommentFilter(blocklist=(), dedup_window_sec=0),
+            user_cooldown_sec=0,
         )
         self.app = FastAPI()
         self.app.include_router(meta.router)

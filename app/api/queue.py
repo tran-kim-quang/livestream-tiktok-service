@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import get_comments
 from app.comments.buffer import CommentBuffer
+from app.config import AGENT_AUTO
 
 router = APIRouter(prefix="/api/queue", tags=["queue"])
 
@@ -14,6 +15,11 @@ async def queue_pop(
     comments: CommentBuffer = Depends(get_comments),
 ) -> dict:
     """Lấy comment mới, đáng trả lời nhất và xoá khỏi buffer."""
+    if AGENT_AUTO:
+        raise HTTPException(
+            status_code=409,
+            detail="AGENT_AUTO đang bật; service agent là consumer duy nhất của comment buffer.",
+        )
     comment = await comments.next(timeout=timeout)
     return {"empty": comment is None, "comment": comment}
 

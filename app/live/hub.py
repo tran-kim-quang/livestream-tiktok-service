@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
 from fastapi import WebSocket
@@ -17,9 +18,15 @@ OnComment = Callable[[Dict[str, Any]], Awaitable[None]]
 
 def _comment_to_dict(client: TikTokLiveClient, event: CommentEvent) -> Dict[str, Any]:
     u = event.user
+    common = getattr(event, "common", None)
+    raw_msg_id = getattr(common, "msg_id", None) if common is not None else None
+    raw_create_time = getattr(common, "create_time", None) if common is not None else None
     return {
         "type": "comment",
         "comment": event.comment,
+        "msg_id": str(raw_msg_id) if raw_msg_id not in (None, 0, "") else None,
+        # Thời điểm TikTok tạo comment (epoch ms) — dùng để bỏ backlog lúc kết nối
+        "create_time": int(raw_create_time) if raw_create_time else None,
         "user": {
             "id": int(u.id) if getattr(u, "id", None) else None,
             "nickname": u.nickname,
@@ -44,6 +51,8 @@ class LiveStreamSession:
         self.task: Optional[asyncio.Task] = None
         # True khi TikTok báo live kết thúc (phân biệt với mất kết nối)
         self.live_ended = False
+        # Epoch ms lúc bắt đầu kết nối; comment tạo trước mốc này là backlog TikTok gửi lại
+        self.started_at_ms: Optional[int] = None
         # Khi managed=True session tồn tại độc lập, không tự dừng khi hết WS subscriber
         self.managed: bool = False
 
@@ -78,6 +87,7 @@ class LiveStreamSession:
         @self.client.on(CommentEvent)
         async def on_comment(event: CommentEvent) -> None:
             data = _comment_to_dict(self.client, event)
+            data["session_started_at"] = self.started_at_ms
             await self._on_comment(data)
             await self._broadcast(data)
 
@@ -112,6 +122,7 @@ class LiveStreamSession:
             if self._started:
                 return
             self._attach_listeners()
+            self.started_at_ms = int(time.time() * 1000)
             self.task = await self.client.start(
                 fetch_room_info=False,
                 fetch_gift_info=False,
