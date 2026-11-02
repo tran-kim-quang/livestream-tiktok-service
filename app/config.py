@@ -74,6 +74,9 @@ COMMENT_CONTEXT_FILE: str = os.environ.get("COMMENT_CONTEXT_FILE", "").strip()
 COMMENT_SIM_FLOOR: float = float(os.environ.get("COMMENT_SIM_FLOOR", "0.30"))
 COMMENT_SIM_CEIL: float = float(os.environ.get("COMMENT_SIM_CEIL", "0.70"))
 COMMENT_CORE_WEIGHT: float = float(os.environ.get("COMMENT_CORE_WEIGHT", "10.0"))
+# 1 = chỉ nhận comment liên quan live context (similarity >= AGENT_CONTEXT_SIM_THRESHOLD);
+# khi embedding không khả dụng thì chỉ nhận comment có dạng câu hỏi
+COMMENT_QUESTIONS_ONLY = _truthy("COMMENT_QUESTIONS_ONLY", True)
 
 # Ưu tiên khán giả trong phiên live.
 COMMENT_BONUS_GIFT: float = float(os.environ.get("COMMENT_BONUS_GIFT", "4.0"))
@@ -159,6 +162,8 @@ LLM_MAX_TOKENS: int = max(1, int(os.environ.get("LLM_MAX_TOKENS", "150")))
 LLM_TEMPERATURE: float = float(os.environ.get("LLM_TEMPERATURE", "0.7"))
 LLM_MAX_RPS: float = max(0.0, float(os.environ.get("LLM_MAX_RPS", "60")))
 LLM_MAX_CONCURRENCY: int = max(1, int(os.environ.get("LLM_MAX_CONCURRENCY", "2")))
+# Cache DNS trong process (giây); 0 = tắt. Tránh ~15 s tra DNS mỗi lần cache OS hết hạn.
+DNS_CACHE_TTL_SEC: float = max(0.0, float(os.environ.get("DNS_CACHE_TTL_SEC", "300")))
 AGENT_ENABLED: bool = _truthy("AGENT_ENABLED", True)
 AGENT_AUTO: bool = _truthy("AGENT_AUTO", False)
 AGENT_AUTO_SPEAK: bool = _truthy("AGENT_AUTO_SPEAK", True)

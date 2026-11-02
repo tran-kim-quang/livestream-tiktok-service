@@ -172,7 +172,7 @@ class CommentBufferTest(unittest.IsolatedAsyncioTestCase):
         )
         kwargs.setdefault("user_cooldown_sec", 0)
         kwargs.setdefault("merge_window_sec", 0)
-        return CommentBuffer(comment_filter=comment_filter, clock=self.clock, **kwargs)
+        return CommentBuffer(comment_filter=comment_filter, clock=self.clock, **{"questions_only": False, **kwargs})
 
     async def test_gop_hai_comment_cung_user_va_lam_moi_timestamp(self) -> None:
         buffer = self.make_buffer(
@@ -234,6 +234,7 @@ class CommentBufferTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_all_in_cooldown_cho_den_khi_het(self) -> None:
         buffer = CommentBuffer(
+            questions_only=False,
             comment_filter=CommentFilter(blocklist=(), dedup_window_sec=0),
             user_cooldown_sec=0.03,
             merge_window_sec=0,
@@ -315,6 +316,7 @@ class FakeHub:
 class CommentApiTest(unittest.TestCase):
     def setUp(self) -> None:
         self.buffer = CommentBuffer(
+            questions_only=False,
             comment_filter=CommentFilter(blocklist=(), dedup_window_sec=0),
             user_cooldown_sec=0,
         )

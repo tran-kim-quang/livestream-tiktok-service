@@ -28,6 +28,22 @@ QUESTION_PATTERNS = (
     re.compile(r"\bduoc khong\b"),
     re.compile(r"\bai\b"),
 )
+# chỉ dùng cho is_question, không cộng điểm
+_EXTRA_QUESTION_PATTERNS = (
+    re.compile(r"\bchua\b"),
+    re.compile(r"\bnao\b"),
+    re.compile(r"\bha\b"),
+    re.compile(r"\bnhi\b"),
+    re.compile(r"\bxin\b"),
+)
+
+
+def is_question(text: str) -> bool:
+    """Comment có dạng câu hỏi/yêu cầu (fallback khi không có similarity)."""
+    if "?" in text:
+        return True
+    normalized = normalize_text(text)
+    return any(p.search(normalized) for p in QUESTION_PATTERNS + _EXTRA_QUESTION_PATTERNS)
 
 
 def score(

@@ -223,6 +223,7 @@ class AgentApiTest(unittest.TestCase):
 class AutoLoopTest(unittest.IsolatedAsyncioTestCase):
     async def test_consume_va_store_reply(self) -> None:
         comments = CommentBuffer(
+            questions_only=False,
             comment_filter=CommentFilter(blocklist=(), dedup_window_sec=0),
             user_cooldown_sec=0,
         )

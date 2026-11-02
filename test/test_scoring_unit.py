@@ -69,6 +69,7 @@ class RelevanceBufferTest(unittest.IsolatedAsyncioTestCase):
 
     def buffer(self, **kwargs: Any) -> CommentBuffer:
         return CommentBuffer(
+            questions_only=False,
             comment_filter=make_filter(self.clock), relevance=self.relevance,
             clock=self.clock, merge_window_sec=0, user_cooldown_sec=0, **kwargs,
         )
@@ -84,6 +85,7 @@ class RelevanceBufferTest(unittest.IsolatedAsyncioTestCase):
     async def test_fallback_not_ready_error_and_timeout(self) -> None:
         cold = RelevanceScorer(self.embedder, passages=["game schedule"], timeout_sec=0.01)
         cold_buffer = CommentBuffer(
+            questions_only=False,
             comment_filter=make_filter(), relevance=cold, merge_window_sec=0,
             user_cooldown_sec=0, scorer=lambda _: 5.75,
         )
@@ -118,6 +120,7 @@ class RelevanceBufferTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_merged_core_is_max_of_parts(self) -> None:
         buffer = CommentBuffer(
+            questions_only=False,
             comment_filter=make_filter(self.clock), relevance=self.relevance,
             clock=self.clock, merge_window_sec=10, user_cooldown_sec=0,
         )
@@ -149,6 +152,7 @@ class AudienceTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_late_gift_changes_rank(self) -> None:
         buffer = CommentBuffer(
+            questions_only=False,
             comment_filter=make_filter(self.clock), audience=self.tracker, clock=self.clock,
             merge_window_sec=0, user_cooldown_sec=0,
             scorer=lambda item: 1.1 if item["user"]["id"] == "plain" else 0.0,
@@ -160,6 +164,7 @@ class AudienceTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_bypass_window_forever_and_identity_not_bypass(self) -> None:
         buffer = CommentBuffer(
+            questions_only=False,
             comment_filter=make_filter(self.clock), audience=self.tracker, clock=self.clock,
             merge_window_sec=0, user_cooldown_sec=100,
         )
@@ -315,6 +320,25 @@ class OllamaAndCircuitTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[-1], ["ping"])
         self.assertAlmostEqual(await scorer.similarity("second"), 1.0)
         await scorer.aclose()
+
+
+class QuestionsOnlyTest(unittest.IsolatedAsyncioTestCase):
+    async def test_chi_nhan_comment_lien_quan_context(self) -> None:
+        relevance = RelevanceScorer(FakeEmbedder(), passages=["game schedule"])
+        await relevance.warmup()
+        buffer = CommentBuffer(
+            comment_filter=make_filter(), relevance=relevance,
+            questions_only=True, question_threshold=0.4,
+        )
+        self.assertTrue(await buffer.add(payload("game gi vay", "a")))
+        self.assertFalse(await buffer.add(payload("chao moi nguoi", "b")))
+        self.assertEqual((await buffer.stats())["dropped_by_reason"]["not_question"], 1)
+
+    async def test_khong_co_similarity_thi_dung_dang_cau_hoi(self) -> None:
+        buffer = CommentBuffer(comment_filter=make_filter(), questions_only=True)
+        self.assertTrue(await buffer.add(payload("mấy giờ live vậy?", "a")))
+        self.assertTrue(await buffer.add(payload("xin link ảnh", "b")))
+        self.assertFalse(await buffer.add(payload("mới dậy mà ae", "c")))
 
 
 if __name__ == "__main__":

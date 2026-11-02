@@ -327,6 +327,7 @@ Giá trị mặc định lấy từ `app/config.py`. Mẫu đầy đủ ở `.en
 | `COMMENT_CONTEXT_FILE` | fallback `AGENT_PROMPT_FILE` | File passage ngữ cảnh UTF-8 |
 | `COMMENT_SIM_FLOOR` / `COMMENT_SIM_CEIL` | 0,30 / 0,70 | Khoảng cosine ánh xạ sang core `[0,1]` |
 | `COMMENT_CORE_WEIGHT` | 10 | Trọng số relevance core trong total |
+| `COMMENT_QUESTIONS_ONLY` | 1 | Chỉ nhận comment có similarity >= `AGENT_CONTEXT_SIM_THRESHOLD` (bỏ với lý do `not_question`); không có similarity thì chỉ nhận comment dạng câu hỏi |
 | `COMMENT_BONUS_GIFT` / `COMMENT_BONUS_FOLLOW` | 4 / 2 | Bonus gift tối đa và follow gần đây |
 | `COMMENT_BONUS_SUBSCRIBER` / `COMMENT_BONUS_GIFT_GIVER` | 1,5 / 1 | Bonus identity subscriber/gifter lịch sử |
 | `COMMENT_BONUS_FOLLOWER` / `COMMENT_BONUS_MODERATOR` | 0,5 / 0,5 | Bonus identity follower/moderator |
@@ -355,6 +356,7 @@ Giá trị mặc định lấy từ `app/config.py`. Mẫu đầy đủ ở `.en
 | `LLM_API_KEY` | — | API key |
 | `LLM_MODEL_NAME` (`LLM_MODEL`) | gpt-4o-mini | Tên model |
 | `LLM_TIMEOUT_SEC` / `LLM_MAX_TOKENS` / `LLM_TEMPERATURE` | 30 / 150 / 0.7 | Tham số gọi LLM |
+| `DNS_CACHE_TTL_SEC` | 300 | Cache DNS trong process: trả kết quả cũ ngay và làm mới ở nền; `0` = tắt |
 | `LLM_MAX_RPS` / `LLM_MAX_CONCURRENCY` | 60 / 2 | Giới hạn tốc độ và số request song song |
 | `AGENT_ENABLED` | true | Bật lớp agent |
 | `AGENT_AUTO` | false | Bật vòng lặp tự động |
@@ -427,3 +429,5 @@ Script thủ công:
 - **Greeting được phát sau delta LLM đầu tiên.** Đánh đổi này tránh phát lời chào khi LLM lỗi, nhưng làm tiếng đầu tiên trễ thêm bằng thời gian LLM ra first token, nếu thời gian đó lớn hơn thời gian TTS greeting.
 - **Chữ hoa sau dấu phẩy của greeting** ("Lan ơi, Anh…"): chỉ khác ở text, không ảnh hưởng giọng đọc.
 - **Chưa kiểm thử với live đông người** (nhiều comment mỗi giây) để đánh giá scoring, merge và cooldown dưới tải.
+
+> **DNS chậm trên Windows + Tailscale:** adapter Tailscale khai báo DNS IPv6 `fec0:0:0:ffff::1..3` không phản hồi, nên mỗi lần cache DNS của OS hết hạn `getaddrinfo("ollama.com")` mất ~15 s (truy vấn AAAA chờ timeout) và LLM first token bị cộng thêm 15 s. `app/dns_cache.py` thay `socket.getaddrinfo` bằng bản có cache (stale-while-revalidate, `DNS_CACHE_TTL_SEC`) và tra trước host LLM lúc khởi động.

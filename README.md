@@ -373,6 +373,7 @@ python test/test_tts_stream.py --play
 | `COMMENT_CONTEXT_FILE` | fallback `AGENT_PROMPT_FILE` | File passage ngữ cảnh UTF-8 |
 | `COMMENT_SIM_FLOOR` / `COMMENT_SIM_CEIL` | `0.30` / `0.70` | Khoảng cosine ánh xạ sang core |
 | `COMMENT_CORE_WEIGHT` | `10.0` | Trọng số core trong tổng điểm |
+| `COMMENT_QUESTIONS_ONLY` | `1` | Chỉ nhận comment có similarity >= `AGENT_CONTEXT_SIM_THRESHOLD` (bỏ với lý do `not_question`); không có similarity thì chỉ nhận comment dạng câu hỏi |
 | `COMMENT_BONUS_GIFT` / `COMMENT_BONUS_FOLLOW` | `4.0` / `2.0` | Bonus gift tối đa và follow gần đây |
 | `COMMENT_BONUS_SUBSCRIBER` / `COMMENT_BONUS_GIFT_GIVER` | `1.5` / `1.0` | Bonus identity subscriber/gifter |
 | `COMMENT_BONUS_FOLLOWER` / `COMMENT_BONUS_MODERATOR` | `0.5` / `0.5` | Bonus identity follower/moderator |
@@ -410,6 +411,7 @@ python test/test_tts_stream.py --play
 | `LLM_TEMPERATURE` | `0.7` | Temperature gửi provider |
 | `LLM_MAX_RPS` | `60` | Giới hạn request LLM mỗi giây |
 | `LLM_MAX_CONCURRENCY` | `2` | Số request LLM song song |
+| `DNS_CACHE_TTL_SEC` | `300` | Cache DNS trong process: trả kết quả cũ ngay và làm mới ở nền; `0` = tắt |
 | `AGENT_ENABLED` | `true` | Đặt `false` để buộc tắt agent |
 | `AGENT_AUTO` | `false` | Tự consume comment queue và broadcast reply |
 | `AGENT_AUTO_SPEAK` | `true` | Auto mode stream LLM → TTS → PCM qua WebSocket; cần TTS bật |

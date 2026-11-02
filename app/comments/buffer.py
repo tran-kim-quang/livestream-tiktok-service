@@ -10,8 +10,9 @@ from typing import Any
 from app.comments.audience import AudienceTracker, user_key
 from app.comments.filters import CommentFilter
 from app.comments.relevance import RelevanceScorer, core_from_similarity
-from app.comments.scoring import score
+from app.comments.scoring import is_question, score
 from app.config import (
+    AGENT_CONTEXT_SIM_THRESHOLD, COMMENT_QUESTIONS_ONLY,
     COMMENT_BUFFER_SIZE, COMMENT_CORE_WEIGHT, COMMENT_FRESH_WINDOW_SEC,
     COMMENT_MAX_AGE_SEC, COMMENT_MAX_CHARS, COMMENT_MAX_SERVE_PER_SEC,
     COMMENT_MERGE_MAX_PARTS, COMMENT_MERGE_WINDOW_SEC, COMMENT_PRIORITY_KEYWORDS,
@@ -35,6 +36,8 @@ class CommentBuffer:
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], datetime] | None = None,
         scorer: Callable[[Mapping[str, Any]], float] = score,
+        questions_only: bool = COMMENT_QUESTIONS_ONLY,
+        question_threshold: float = AGENT_CONTEXT_SIM_THRESHOLD,
     ) -> None:
         self.filter = comment_filter or CommentFilter(clock=clock)
         self.relevance = relevance
@@ -51,6 +54,8 @@ class CommentBuffer:
         self._clock = clock
         self._wall_clock = wall_clock or (lambda: datetime.now(timezone.utc))
         self._scorer = scorer
+        self.questions_only = questions_only
+        self.question_threshold = question_threshold
         self._items: list[tuple[float, int, dict[str, Any]]] = []
         self._sequence = 0
         self._condition = asyncio.Condition()
@@ -82,6 +87,12 @@ class CommentBuffer:
                 return False
         text = str(payload.get("comment") or "").strip()
         core, source, similarity = await self._calculate_core(payload, text)
+        if self.questions_only and not (
+            similarity >= self.question_threshold if similarity is not None else is_question(text)
+        ):
+            async with self._condition:
+                self._dropped["not_question"] += 1
+            return False
 
         async with self._condition:
             now = self._clock()

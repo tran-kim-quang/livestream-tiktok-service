@@ -178,6 +178,7 @@ class AutoSpeakLoopTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_khong_listener_thi_khong_consume(self) -> None:
         comments = CommentBuffer(
+            questions_only=False,
             comment_filter=CommentFilter(blocklist=(), dedup_window_sec=0),
             user_cooldown_sec=0,
         )

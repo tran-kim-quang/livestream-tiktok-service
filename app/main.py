@@ -5,6 +5,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI
 
@@ -23,13 +24,14 @@ from app.config import (
     AGENT_PLAYED_ACK_GRACE_SEC, AGENT_PROMPT_FILE, AGENT_REPLY_BUFFER,
     AGENT_REPLY_GAP_SEC,
     AGENT_SKIP_WHEN_NO_LISTENER, AGENT_SYSTEM_PROMPT, AGENT_TTS_GUIDE_FILE,
-    LLM_API_KEY,
+    DNS_CACHE_TTL_SEC, LLM_API_KEY,
     LLM_BASE_URL, LLM_MAX_TOKENS, LLM_MODEL, LLM_TEMPERATURE,
     LLM_TIMEOUT_SEC, SIGN_API_KEY, TIKTOK_LIVE_RETRY_SEC, TIKTOK_USERNAME,
     AUDIO_PLAYER, AUDIO_PLAYER_EXPLICIT,
     COMMENT_EMBED_KEEP_ALIVE, COMMENT_EMBED_MODEL, COMMENT_EMBED_PORT,
     COMMENT_CONTEXT_FILE, COMMENT_EMBED_URL, COMMENT_RELEVANCE,
 )
+from app import dns_cache
 from app.gpu import GpuNode
 from app.live.hub import LiveStreamHub
 from app.live.watcher import auto_watch
@@ -78,6 +80,12 @@ def load_live_context(context_file: str = COMMENT_CONTEXT_FILE) -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     WebDefaults.tiktok_sign_api_key = SIGN_API_KEY or None
+    if DNS_CACHE_TTL_SEC > 0:
+        dns_cache.install(DNS_CACHE_TTL_SEC)
+        if AGENT_ENABLED and LLM_API_KEY:
+            host = urlsplit(LLM_BASE_URL).hostname
+            if host:
+                dns_cache.prefetch(host)
     logger.info("Euler sign API key: %s", "on" if SIGN_API_KEY else "off")
     node = GpuNode.from_env()
     audience = AudienceTracker()
