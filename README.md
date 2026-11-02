@@ -283,9 +283,9 @@ Khi không chạy auto-speak, đặt rõ `AUDIO_PLAYER=auto`, `sounddevice` ho�
 Muốn dùng máy GPU từ xa, đặt IP LAN/Tailscale hoặc hostname. Ví dụ máy Tailscale đã cấu hình VoiceStudio:
 
 ```env
-GPU_HOST=100.98.141.59
-GPU_NAME=meconlonton-ms-7d48
-GPU_SSH_USER=meconlonton
+GPU_HOST=
+GPU_NAME=
+GPU_SSH_USER=
 GPU_SSH_KEY=/run/secrets/gpu_ssh_key
 VOICESTUDIO_API_PORT=3900
 ```
@@ -342,91 +342,3 @@ python test/test_tts_stream.py
 # Phát ngay bằng ffplay và báo thời gian tới audio đầu tiên/underrun
 python test/test_tts_stream.py --play
 ```
-
-## Biến môi trường
-
-| Biến | Mặc định | Mô tả |
-|---|---|---|
-| `TIKTOK_USERNAME` | rỗng | Username TikTok tự theo dõi |
-| `TIKTOK_LIVE_RETRY_SEC` | `30` | Giây chờ trước lần reconnect live |
-| `EULER` | rỗng | Euler Stream sign key cho TikTokLive (fallback `SIGN_API_KEY`) |
-| `COMMENT_MIN_CHARS` | `2` | Số chữ/số tối thiểu sau khi bỏ emoji/dấu câu |
-| `COMMENT_MAX_CHARS` | `300` | Độ dài comment tối đa |
-| `COMMENT_DEDUP_WINDOW_SEC` | `60` | Cửa sổ loại nội dung trùng từ mọi user |
-| `COMMENT_SKIP_BACKLOG` | `1` | Bỏ comment cũ TikTok gửi lại lúc kết nối (tạo trước lúc service kết nối) |
-| `COMMENT_BACKLOG_SLACK_SEC` | `2` | Độ lệch đồng hồ cho phép khi so `create_time` với lúc kết nối |
-| `COMMENT_MSG_ID_TTL_SEC` | `600` | Thời gian ghi nhớ TikTok message ID để loại replay |
-| `COMMENT_USER_COOLDOWN_SEC` | `8` | Cooldown của user sau khi comment được lấy để trả lời |
-| `COMMENT_MERGE_WINDOW_SEC` | `10` | Cửa sổ gộp comment chưa được trả lời của cùng user |
-| `COMMENT_MERGE_MAX_PARTS` | `3` | Số phần tối đa trong một comment đã gộp |
-| `COMMENT_BLOCKLIST` | rỗng | Hard ban: từ/cụm từ làm comment bị bỏ, phân cách bằng dấu phẩy |
-| `COMMENT_PRIORITY_KEYWORDS` | rỗng | Từ/cụm từ được cộng điểm, phân cách bằng dấu phẩy |
-| `COMMENT_BUFFER_SIZE` | `50` | Số comment hợp lệ tối đa giữ trong RAM |
-| `COMMENT_MAX_AGE_SEC` | `30` | Tuổi tối đa trước khi loại khỏi buffer |
-| `COMMENT_FRESH_WINDOW_SEC` | `15` | Cửa sổ comment đủ mới để `/queue/pop` chọn |
-| `COMMENT_MAX_SERVE_PER_SEC` | `0` | Giới hạn lượt pop mỗi giây; `0` là không giới hạn |
-| `COMMENT_RELEVANCE` | `true` | Bật similarity core qua Ollama |
-| `COMMENT_EMBED_MODEL` / `COMMENT_EMBED_PORT` | `qwen3-embedding:0.6b` / `11434` | Model và port embedding trên GPU |
-| `COMMENT_EMBED_URL` | rỗng | URL Ollama trực tiếp ghi đè GPU/SSH |
-| `COMMENT_EMBED_KEEP_ALIVE` / `COMMENT_EMBED_TIMEOUT_SEC` | `30m` / `0.5` | Giữ model và timeout comment |
-| `COMMENT_EMBED_NUM_GPU` | `0` | Layer Ollama đưa lên GPU; `0` = chạy CPU máy GPU, trống = Ollama tự chọn |
-| `COMMENT_CONTEXT_FILE` | fallback `AGENT_PROMPT_FILE` | File passage ngữ cảnh UTF-8 |
-| `COMMENT_SIM_FLOOR` / `COMMENT_SIM_CEIL` | `0.30` / `0.70` | Khoảng cosine ánh xạ sang core |
-| `COMMENT_CORE_WEIGHT` | `10.0` | Trọng số core trong tổng điểm |
-| `COMMENT_QUESTIONS_ONLY` | `1` | Chỉ nhận comment có similarity >= `AGENT_CONTEXT_SIM_THRESHOLD` (bỏ với lý do `not_question`); không có similarity thì chỉ nhận comment dạng câu hỏi |
-| `COMMENT_BONUS_GIFT` / `COMMENT_BONUS_FOLLOW` | `4.0` / `2.0` | Bonus gift tối đa và follow gần đây |
-| `COMMENT_BONUS_SUBSCRIBER` / `COMMENT_BONUS_GIFT_GIVER` | `1.5` / `1.0` | Bonus identity subscriber/gifter |
-| `COMMENT_BONUS_FOLLOWER` / `COMMENT_BONUS_MODERATOR` | `0.5` / `0.5` | Bonus identity follower/moderator |
-| `COMMENT_GIFT_HALF_LIFE_SEC` / `COMMENT_GIFT_DIAMOND_CAP` | `300` / `500` | Decay và cap diamonds |
-| `COMMENT_PRIORITY_WINDOW_SEC` | `600` | Cửa sổ gift/follow và bypass cooldown; `0` = suốt process |
-| `GPU_HOST` | `local` | `local`, IP LAN/Tailscale hoặc hostname GPU |
-| `GPU_NAME` | rỗng | Tên hiển thị máy GPU trong log/health |
-| `GPU_LOCAL_HOST` | `127.0.0.1` | Địa chỉ thật khi `GPU_HOST=local` |
-| `GPU_SSH_USER` | rỗng | User SSH; có giá trị sẽ bật tunnel cho GPU remote |
-| `GPU_SSH_PORT` | `22` | Port SSH của máy GPU |
-| `GPU_SSH_KEY` | rỗng | Private key SSH (trong Compose: `/run/secrets/gpu_ssh_key`) |
-| `GPU_SSH_PASSWORD` | rỗng | Mật khẩu SSH dự phòng, không được log |
-| `GPU_SSH_KNOWN_HOSTS` | rỗng | File known_hosts; rỗng là không kiểm tra host key |
-| `TTS_ENGINE` | `voicestudio` | `voicestudio` hoặc `pyramid` |
-| `VOICESTUDIO_API_PORT` | `3900` | Port VoiceStudio API v0.5.x |
-| `VOICESTUDIO_API_KEY` | rỗng | Bearer token khi gọi remote trực tiếp |
-| `VOICESTUDIO_PORT` | `8080` | Port Pyramid Video Web (engine legacy) |
-| `TTS_ENABLED` | `true` | Tắt TTS bằng `0` |
-| `TTS_VOICE_ID` | rỗng | Voice ID mặc định; rỗng dùng default của VoiceStudio |
-| `TTS_FIRST_CHUNK_MAX_WORDS` | `6` | Số từ tối đa ưu tiên cho chunk đầu |
-| `TTS_FIRST_CHUNK_NUM_STEP` | `8` | `num_step` của chunk đầu; rỗng/`0` dùng mặc định engine |
-| `TTS_SPEED` | `1.2` | Tốc độ đọc gửi tới VoiceStudio (1.0 = bình thường) |
-| `TTS_NUM_STEP` | rỗng | `num_step` gửi tới OmniVoice; rỗng dùng mặc định engine |
-| `TTS_MAX_CONCURRENCY` | `1` | Số request TTS song song, bảo vệ GPU dùng chung |
-| `TTS_TIMEOUT_SEC` | `120` | Timeout gọi VoiceStudio (giây) |
-| `AUDIO_PLAYER` | `auto` | Local backend: `auto`, `sounddevice`, `ffplay` hoặc `none` |
-| `AUDIO_OUTPUT_DEVICE` | rỗng | Index/phần tên output device; rỗng dùng system default |
-| `BRIDGE_WS_URL` | `ws://127.0.0.1:8002/api/agent/ws` | URL service cho audio bridge native |
-| `AGENT_LOCAL_PLAYBACK` | `true` | Phát auto-speak trên máy chạy service, song song WebSocket |
-| `LLM_BASE_URL` | `https://api.openai.com/v1` | Base URL API OpenAI-compatible |
-| `LLM_API_KEY` | rỗng | Bearer key; rỗng thì agent tắt |
-| `LLM_MODEL_NAME` | `gpt-4o-mini` | Model chat completions (fallback `LLM_MODEL`) |
-| `LLM_TIMEOUT_SEC` | `30` | Timeout mỗi request LLM |
-| `LLM_MAX_TOKENS` | `150` | Giới hạn token câu trả lời |
-| `LLM_TEMPERATURE` | `0.7` | Temperature gửi provider |
-| `LLM_MAX_RPS` | `60` | Giới hạn request LLM mỗi giây |
-| `LLM_MAX_CONCURRENCY` | `2` | Số request LLM song song |
-| `DNS_CACHE_TTL_SEC` | `300` | Cache DNS trong process: trả kết quả cũ ngay và làm mới ở nền; `0` = tắt |
-| `AGENT_ENABLED` | `true` | Đặt `false` để buộc tắt agent |
-| `AGENT_AUTO` | `false` | Tự consume comment queue và broadcast reply |
-| `AGENT_AUTO_SPEAK` | `true` | Auto mode stream LLM → TTS → PCM qua WebSocket; cần TTS bật |
-| `AGENT_GREETING` | `true` | Service tạo greeting ngắn và tổng hợp song song khi chờ LLM |
-| `AGENT_GREETING_TEMPLATES` | `{name} ơi,\|Chào {name},\|À {name},` | Các mẫu greeting phân cách bằng `|`, tránh lặp mẫu liền nhau |
-| `AGENT_SKIP_WHEN_NO_LISTENER` | `true` | Không consume comment/call LLM khi chưa có WS listener |
-| `AGENT_REPLY_GAP_SEC` | `0.6` | Khoảng nghỉ sau khi client phát xong mỗi reply |
-| `AGENT_PLAYED_ACK_GRACE_SEC` | `3` | Thời gian grace ngoài `audio_sec` để chờ bridge ACK `played` |
-| `AGENT_SYSTEM_PROMPT` | rỗng | System prompt ghi đè trực tiếp |
-| `AGENT_PROMPT_FILE` | rỗng | File system prompt, dùng khi prompt trực tiếp rỗng |
-| `AGENT_TTS_GUIDE_FILE` | `context/tts_style_guide.md` | File hướng dẫn nối vào mọi system prompt; rỗng để tắt |
-| `AGENT_TTS_SINGLE_SHOT` | `1` | Chờ LLM trả xong rồi đọc greeting + reply bằng một lần TTS; `0` để stream theo chunk |
-| `AGENT_TTS_MAX_TAGS` | `1` | Số tag biểu cảm tối đa mỗi reply; `0` để bỏ toàn bộ |
-| `AGENT_HISTORY_TURNS` | `0` | Số cặp comment/reply giữ làm ngữ cảnh; `0` = mỗi comment độc lập |
-| `AGENT_NAME` | `Bomne` | Tên trợ lý trong system prompt mặc định |
-| `AGENT_CONTEXT_SIM_THRESHOLD` | `0.4` | Similarity với live context từ ngưỡng này: gửi kèm `COMMENT_CONTEXT_FILE` và chỉ trả lời theo đó; dưới ngưỡng: chat bình thường |
-| `AGENT_REPLY_BUFFER` | `50` | Số reply gần đây giữ trong RAM |
-| `LIVESTREAM_SERVICE_PORT` | `8002` | Port expose ra ngoài |
