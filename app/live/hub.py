@@ -9,11 +9,10 @@ from TikTokLive import TikTokLiveClient
 from TikTokLive.events import CommentEvent, ConnectEvent
 from TikTokLive.events.custom_events import DisconnectEvent, LiveEndEvent
 
-from app.redis_queue import enqueue_comment_for_ai
-
 logger = logging.getLogger(__name__)
 
 OnEmpty = Callable[[str], Awaitable[None]]
+OnComment = Callable[[Dict[str, Any]], Awaitable[None]]
 
 
 def _comment_to_dict(client: TikTokLiveClient, event: CommentEvent) -> Dict[str, Any]:
@@ -32,7 +31,7 @@ def _comment_to_dict(client: TikTokLiveClient, event: CommentEvent) -> Dict[str,
 
 
 class LiveStreamSession:
-    def __init__(self, unique_id: str, on_empty: OnEmpty) -> None:
+    def __init__(self, unique_id: str, on_empty: OnEmpty, on_comment: OnComment) -> None:
         self.unique_id = unique_id
         self.client = TikTokLiveClient(unique_id=unique_id)
         self.subscribers: Set[WebSocket] = set()
@@ -40,6 +39,11 @@ class LiveStreamSession:
         self._started = False
         self._listeners_attached = False
         self._on_empty = on_empty
+        self._on_comment = on_comment
+        # Task vòng lặp WebSocket của TikTokLive (kết thúc khi mất kết nối / live end)
+        self.task: Optional[asyncio.Task] = None
+        # True khi TikTok báo live kết thúc (phân biệt với mất kết nối)
+        self.live_ended = False
         # Khi managed=True session tồn tại độc lập, không tự dừng khi hết WS subscriber
         self.managed: bool = False
 
@@ -74,11 +78,12 @@ class LiveStreamSession:
         @self.client.on(CommentEvent)
         async def on_comment(event: CommentEvent) -> None:
             data = _comment_to_dict(self.client, event)
-            await enqueue_comment_for_ai(data)
+            await self._on_comment(data)
             await self._broadcast(data)
 
         @self.client.on(LiveEndEvent)
         async def on_live_end(_event: LiveEndEvent) -> None:
+            self.live_ended = True
             await self._broadcast({"type": "live_end", "streamer_unique_id": self.client.unique_id})
 
         @self.client.on(DisconnectEvent)
@@ -107,7 +112,7 @@ class LiveStreamSession:
             if self._started:
                 return
             self._attach_listeners()
-            await self.client.start(
+            self.task = await self.client.start(
                 fetch_room_info=False,
                 fetch_gift_info=False,
                 fetch_live_check=True,
@@ -144,9 +149,10 @@ class LiveStreamSession:
 
 
 class LiveStreamHub:
-    def __init__(self) -> None:
+    def __init__(self, on_comment: OnComment) -> None:
         self._sessions: Dict[str, LiveStreamSession] = {}
         self._global_lock = asyncio.Lock()
+        self._on_comment = on_comment
 
     async def _release_empty(self, key: str) -> None:
         async with self._global_lock:
@@ -156,7 +162,7 @@ class LiveStreamHub:
         key = TikTokLiveClient.parse_unique_id(unique_id)
         async with self._global_lock:
             if key not in self._sessions:
-                self._sessions[key] = LiveStreamSession(key, self._release_empty)
+                self._sessions[key] = LiveStreamSession(key, self._release_empty, self._on_comment)
             return self._sessions[key]
 
     # ------------------------------------------------------------------ #
@@ -190,6 +196,3 @@ class LiveStreamHub:
             self._sessions.clear()
         for s in sessions:
             await s.shutdown()
-
-
-hub = LiveStreamHub()

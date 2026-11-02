@@ -1,7 +1,12 @@
+import sys
+
 import httpx
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 BASE = "http://127.0.0.1:8000"
-POP_TIMEOUT = 5  # giây BRPOP chờ Redis
+POP_TIMEOUT = 5  # giây chờ comment mới trong buffer
 
 # Tách read_timeout riêng = POP_TIMEOUT + buffer
 # httpx.Timeout(connect, read, write, pool)
@@ -12,7 +17,7 @@ _client = httpx.Client(timeout=_TIMEOUT)
 
 
 def get_next_comment() -> dict | None:
-    """Lấy comment tiếp theo từ hàng đợi Redis (blocking).
+    """Lấy comment mới, đáng trả lời nhất từ buffer (blocking).
     Trả None nếu queue rỗng sau POP_TIMEOUT giây.
     """
     try:

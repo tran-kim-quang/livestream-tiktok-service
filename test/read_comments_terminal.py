@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mô phỏng agent lấy comment từ hàng đợi Redis qua livestream-service.
+Mô phỏng agent lấy comment đã chọn lọc trong RAM qua livestream-service.
 
 Cách dùng:
   python test/read_comments_terminal.py
@@ -14,8 +14,8 @@ Cách agent gọi service:
     → {"empty": false, "comment": {"comment": "...", "user": {...}, ...}}
     → {"empty": true,  "comment": null}   ← queue rỗng, chờ live mới gửi
 
-Mỗi comment được pop và XOÁ khỏi hàng đợi (FIFO).
-Comment đến trước được xử lý trước.
+Mỗi comment được pop và XOÁ khỏi buffer; comment điểm cao nhất được ưu tiên,
+bằng điểm thì comment mới hơn được chọn trước.
 """
 from __future__ import annotations
 
@@ -23,6 +23,11 @@ import os
 import sys
 import time
 from typing import Any, Dict, Optional
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 try:
     import httpx
@@ -39,7 +44,7 @@ POP_TIMEOUT: int = int(os.environ.get("POP_TIMEOUT", "5"))
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _check_service(client: httpx.Client) -> bool:
-    """Kiểm tra service và Redis sẵn sàng không."""
+    """Kiểm tra service sẵn sàng và in thống kê comment."""
     try:
         r = client.get(f"{BASE_URL}/health", timeout=5)
         h = r.json()
@@ -47,13 +52,12 @@ def _check_service(client: httpx.Client) -> bool:
         print(f"[lỗi] Không kết nối được service tại {BASE_URL}: {e}", flush=True)
         return False
 
-    redis_ok = h.get("redis") == "ok"
     sessions = h.get("sessions") or []
-    queue_len = h.get("queue_length", "?")
+    comment_stats = h.get("comments") or {}
+    queue_len = comment_stats.get("current", "?")
 
     print("=" * 60, flush=True)
     print(f"  Service  : {BASE_URL}", flush=True)
-    print(f"  Redis    : {'OK' if redis_ok else 'KHÔNG KẾT NỐI'}", flush=True)
     print(f"  Queue    : {queue_len} comment đang chờ", flush=True)
     if sessions:
         s = sessions[0]
@@ -63,9 +67,6 @@ def _check_service(client: httpx.Client) -> bool:
         print("  Live     : chưa có session nào", flush=True)
     print("=" * 60, flush=True)
 
-    if not redis_ok:
-        print("[!] Redis chưa kết nối — không thể đọc queue.", flush=True)
-        return False
     return True
 
 
@@ -85,9 +86,6 @@ def _pop_next(client: httpx.Client) -> Optional[Dict[str, Any]]:
         print(f"[lỗi mạng] {e}", flush=True)
         return None
 
-    if r.status_code == 503:
-        print("[503] Redis mất kết nối.", flush=True)
-        return None
     if r.status_code != 200:
         print(f"[HTTP {r.status_code}] {r.text[:120]}", flush=True)
         return None

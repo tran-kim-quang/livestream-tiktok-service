@@ -15,9 +15,8 @@ COPY app/ ./app/
 # Biến mặc định — ghi đè qua --env hoặc env_file trong docker-compose
 ENV TIKTOK_USERNAME=""
 ENV TIKTOK_LIVE_RETRY_SEC=30
-ENV REDIS_URL=redis://redis:6379/0
-ENV REDIS_QUEUE_KEY=livestream:comments
-ENV REDIS_ROOM_MAX_COMMENTS=2000
+ENV COMMENT_BUFFER_SIZE=50
+ENV COMMENT_MAX_AGE_SEC=30
 
 EXPOSE 8002
 
