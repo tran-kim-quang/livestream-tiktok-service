@@ -283,9 +283,9 @@ Khi không chạy auto-speak, đặt rõ `AUDIO_PLAYER=auto`, `sounddevice` ho�
 Muốn dùng máy GPU từ xa, đặt IP LAN/Tailscale hoặc hostname. Ví dụ máy Tailscale đã cấu hình VoiceStudio:
 
 ```env
-GPU_HOST=100.98.141.59
-GPU_NAME=meconlonton-ms-7d48
-GPU_SSH_USER=meconlonton
+GPU_HOST=
+GPU_NAME=
+GPU_SSH_USER=
 GPU_SSH_KEY=/run/secrets/gpu_ssh_key
 VOICESTUDIO_API_PORT=3900
 ```
