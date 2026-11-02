@@ -5,6 +5,7 @@ import json
 import os
 import time
 import unittest
+from unittest import mock
 
 os.environ["TIKTOK_USERNAME"] = ""
 os.environ["TTS_ENABLED"] = "0"
@@ -126,6 +127,11 @@ class LiveAgentTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("lịch sự hoặc trả về rỗng", prompt)
         self.assertIn("KHÔNG chào", prompt)
         self.assertNotIn("Gọi tên người xem khi hợp lý", prompt)
+        self.assertIn(
+            "Không dùng emoji, markdown hay ký hiệu vì câu trả lời sẽ được đọc bằng TTS.",
+            prompt,
+        )
+        self.assertIn("tag biểu cảm", default_system_prompt("host", tts_tags=True))
         prompt_without_greeting = default_system_prompt("host", greeting_enabled=False)
         self.assertNotIn("KHÔNG chào", prompt_without_greeting)
         self.assertIn("Gọi tên người xem khi hợp lý", prompt_without_greeting)
@@ -169,6 +175,8 @@ class FakeTTS(TTSEngine):
         return {"ok": True}
 
 
+# Các test này kiểm tra luồng stream theo chunk
+@mock.patch("app.agent.speech.AGENT_TTS_SINGLE_SHOT", False)
 class AgentApiTest(unittest.TestCase):
     def setUp(self) -> None:
         self.app = FastAPI()

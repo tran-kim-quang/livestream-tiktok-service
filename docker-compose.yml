@@ -16,5 +16,7 @@ services:
     volumes:
       # Đổi GPU_SSH_KEY_HOST_PATH nếu private key nằm ở đường dẫn khác trên host.
       - "${GPU_SSH_KEY_HOST_PATH:-~/.ssh/gpu_voicestudio_ed25519}:/run/secrets/gpu_ssh_key:ro"
+      # File ngữ cảnh live cho similarity scoring (COMMENT_CONTEXT_FILE=context/...); sửa xong chỉ cần restart.
+      - "./context:/app/context:ro"
     extra_hosts:
       - "host.docker.internal:host-gateway"

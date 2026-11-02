@@ -25,11 +25,13 @@ class VoiceStudioTTS(TTSEngine):
         max_concurrency: int = 1,
         api_key: str = "",
         num_step: int | None = None,
+        speed: float = 1.0,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.node = node
         self.default_voice_id = default_voice_id
         self.num_step = num_step
+        self.speed = speed
         self._timeout = httpx.Timeout(timeout, connect=5.0)
         self._transport = transport
         self._tunnel = SshTunnel(node, remote_port=port) if node.use_ssh else None
@@ -111,7 +113,7 @@ class VoiceStudioTTS(TTSEngine):
         voice = await self._resolve_voice(voice_id)
         payload: Dict[str, Any] = {
             "model": "omnivoice", "input": text, "voice": voice,
-            "response_format": response_format, "speed": 1.0,
+            "response_format": response_format, "speed": self.speed,
             "stream_format": "audio",
         }
         effective_num_step = num_step if num_step is not None else self.num_step

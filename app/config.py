@@ -56,6 +56,42 @@ COMMENT_MAX_SERVE_PER_SEC: float = max(
     0.0, float(os.environ.get("COMMENT_MAX_SERVE_PER_SEC", "0"))
 )
 
+# Relevance: Ollama chạy cùng máy GPU, có thể đi qua SSH tunnel riêng.
+COMMENT_RELEVANCE: bool = _truthy("COMMENT_RELEVANCE", True)
+COMMENT_EMBED_MODEL: str = os.environ.get(
+    "COMMENT_EMBED_MODEL", "qwen3-embedding:0.6b"
+).strip()
+COMMENT_EMBED_PORT: int = int(os.environ.get("COMMENT_EMBED_PORT", "11434"))
+COMMENT_EMBED_URL: str = os.environ.get("COMMENT_EMBED_URL", "").strip().rstrip("/")
+COMMENT_EMBED_KEEP_ALIVE: str = os.environ.get("COMMENT_EMBED_KEEP_ALIVE", "30m").strip()
+# Số layer Ollama đưa lên GPU; 0 = chạy CPU (mặc định, VRAM 6 GB dành cho TTS), trống = Ollama tự chọn
+_embed_num_gpu = os.environ.get("COMMENT_EMBED_NUM_GPU", "0").strip()
+COMMENT_EMBED_NUM_GPU: int | None = int(_embed_num_gpu) if _embed_num_gpu else None
+COMMENT_EMBED_TIMEOUT_SEC: float = max(
+    0.01, float(os.environ.get("COMMENT_EMBED_TIMEOUT_SEC", "0.5"))
+)
+COMMENT_CONTEXT_FILE: str = os.environ.get("COMMENT_CONTEXT_FILE", "").strip()
+COMMENT_SIM_FLOOR: float = float(os.environ.get("COMMENT_SIM_FLOOR", "0.30"))
+COMMENT_SIM_CEIL: float = float(os.environ.get("COMMENT_SIM_CEIL", "0.70"))
+COMMENT_CORE_WEIGHT: float = float(os.environ.get("COMMENT_CORE_WEIGHT", "10.0"))
+
+# Ưu tiên khán giả trong phiên live.
+COMMENT_BONUS_GIFT: float = float(os.environ.get("COMMENT_BONUS_GIFT", "4.0"))
+COMMENT_BONUS_FOLLOW: float = float(os.environ.get("COMMENT_BONUS_FOLLOW", "2.0"))
+COMMENT_BONUS_SUBSCRIBER: float = float(os.environ.get("COMMENT_BONUS_SUBSCRIBER", "1.5"))
+COMMENT_BONUS_GIFT_GIVER: float = float(os.environ.get("COMMENT_BONUS_GIFT_GIVER", "1.0"))
+COMMENT_BONUS_FOLLOWER: float = float(os.environ.get("COMMENT_BONUS_FOLLOWER", "0.5"))
+COMMENT_BONUS_MODERATOR: float = float(os.environ.get("COMMENT_BONUS_MODERATOR", "0.5"))
+COMMENT_GIFT_HALF_LIFE_SEC: float = max(
+    0.01, float(os.environ.get("COMMENT_GIFT_HALF_LIFE_SEC", "300"))
+)
+COMMENT_GIFT_DIAMOND_CAP: float = max(
+    0.01, float(os.environ.get("COMMENT_GIFT_DIAMOND_CAP", "500"))
+)
+COMMENT_PRIORITY_WINDOW_SEC: float = max(
+    0.0, float(os.environ.get("COMMENT_PRIORITY_WINDOW_SEC", "600"))
+)
+
 # ── GPU ───────────────────────────────────────────────────────────────────────
 # Địa chỉ máy GPU (IP LAN/Tailscale hoặc hostname). "local" = card trên máy này.
 GPU_HOST: str = os.environ.get("GPU_HOST", "local")
@@ -78,6 +114,8 @@ VOICESTUDIO_API_KEY: str = os.environ.get("VOICESTUDIO_API_KEY", "")
 TTS_ENGINE: str = os.environ.get("TTS_ENGINE", "voicestudio").strip().lower()
 _tts_num_step = os.environ.get("TTS_NUM_STEP", "").strip()
 TTS_NUM_STEP: int | None = int(_tts_num_step) if _tts_num_step else None
+# Tốc độ đọc gửi tới VoiceStudio (1.0 = bình thường)
+TTS_SPEED: float = float(os.environ.get("TTS_SPEED", "1.2"))
 TTS_FIRST_CHUNK_MAX_WORDS: int = int(os.environ.get("TTS_FIRST_CHUNK_MAX_WORDS", "6"))
 _tts_first_chunk_num_step = os.environ.get("TTS_FIRST_CHUNK_NUM_STEP", "8").strip()
 TTS_FIRST_CHUNK_NUM_STEP: int | None = (
@@ -141,5 +179,16 @@ AGENT_PLAYED_ACK_GRACE_SEC: float = max(
 )
 AGENT_SYSTEM_PROMPT: str = os.environ.get("AGENT_SYSTEM_PROMPT", "").strip()
 AGENT_PROMPT_FILE: str = os.environ.get("AGENT_PROMPT_FILE", "").strip()
-AGENT_HISTORY_TURNS: int = max(0, int(os.environ.get("AGENT_HISTORY_TURNS", "6")))
+AGENT_TTS_GUIDE_FILE: str = os.environ.get(
+    "AGENT_TTS_GUIDE_FILE", "context/tts_style_guide.md"
+).strip()
+# 1 = chờ LLM trả xong rồi đọc cả câu trả lời bằng một lần TTS; 0 = stream theo chunk
+AGENT_TTS_SINGLE_SHOT = _truthy("AGENT_TTS_SINGLE_SHOT", True)
+AGENT_TTS_MAX_TAGS: int = max(0, int(os.environ.get("AGENT_TTS_MAX_TAGS", "1")))
+# Mặc định 0: mỗi comment trả lời độc lập, không gửi kèm các comment trước
+AGENT_HISTORY_TURNS: int = max(0, int(os.environ.get("AGENT_HISTORY_TURNS", "0")))
+# Tên trợ lý trong system prompt mặc định
+AGENT_NAME: str = os.environ.get("AGENT_NAME", "Bomne").strip() or "Bomne"
+# Similarity >= ngưỡng → trả lời theo live context; dưới ngưỡng → chat bình thường
+AGENT_CONTEXT_SIM_THRESHOLD: float = float(os.environ.get("AGENT_CONTEXT_SIM_THRESHOLD", "0.4"))
 AGENT_REPLY_BUFFER: int = max(1, int(os.environ.get("AGENT_REPLY_BUFFER", "50")))

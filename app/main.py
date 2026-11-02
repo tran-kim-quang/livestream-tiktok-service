@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
 
@@ -14,16 +16,19 @@ from app.api import live, meta, queue, tts
 from app.agent import OpenAICompatLLM, LiveAgent, default_system_prompt
 from app.agent.loop import auto_reply_loop
 from app.audio.player import LocalAudioPlayer, create_player
-from app.comments import CommentBuffer
+from app.comments import AudienceTracker, CommentBuffer, OllamaEmbedder, RelevanceScorer
 from app.config import (
     AGENT_AUTO, AGENT_AUTO_SPEAK, AGENT_ENABLED, AGENT_HISTORY_TURNS,
     AGENT_LOCAL_PLAYBACK,
     AGENT_PLAYED_ACK_GRACE_SEC, AGENT_PROMPT_FILE, AGENT_REPLY_BUFFER,
     AGENT_REPLY_GAP_SEC,
-    AGENT_SKIP_WHEN_NO_LISTENER, AGENT_SYSTEM_PROMPT, LLM_API_KEY,
+    AGENT_SKIP_WHEN_NO_LISTENER, AGENT_SYSTEM_PROMPT, AGENT_TTS_GUIDE_FILE,
+    LLM_API_KEY,
     LLM_BASE_URL, LLM_MAX_TOKENS, LLM_MODEL, LLM_TEMPERATURE,
     LLM_TIMEOUT_SEC, SIGN_API_KEY, TIKTOK_LIVE_RETRY_SEC, TIKTOK_USERNAME,
     AUDIO_PLAYER, AUDIO_PLAYER_EXPLICIT,
+    COMMENT_EMBED_KEEP_ALIVE, COMMENT_EMBED_MODEL, COMMENT_EMBED_PORT,
+    COMMENT_CONTEXT_FILE, COMMENT_EMBED_URL, COMMENT_RELEVANCE,
 )
 from app.gpu import GpuNode
 from app.live.hub import LiveStreamHub
@@ -32,21 +37,76 @@ from app.tts import create_tts_engine
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+_warned_missing_guides: set[str] = set()
+
+
+def resolve_system_prompt(
+    username: str,
+    system_prompt: str = AGENT_SYSTEM_PROMPT,
+    prompt_file: str = AGENT_PROMPT_FILE,
+    guide_file: str = AGENT_TTS_GUIDE_FILE,
+) -> str:
+    prompt = system_prompt
+    if not prompt and prompt_file:
+        with open(prompt_file, encoding="utf-8") as source:
+            prompt = source.read().strip()
+
+    guide: str | None = None
+    if guide_file:
+        path = Path(guide_file)
+        if path.is_file():
+            guide = path.read_text(encoding="utf-8").strip()
+        elif guide_file not in _warned_missing_guides:
+            logger.warning("Không tìm thấy file hướng dẫn TTS: %s", guide_file)
+            _warned_missing_guides.add(guide_file)
+
+    prompt = prompt or default_system_prompt(username, tts_tags=guide is not None)
+    return f"{prompt}\n\n{guide}" if guide else prompt
+
+
+def load_live_context(context_file: str = COMMENT_CONTEXT_FILE) -> str:
+    """Nội dung file context live (cùng file dùng để chấm điểm comment)."""
+    if not context_file:
+        return ""
+    path = Path(context_file)
+    if not path.is_file():
+        logger.warning("Không tìm thấy file context live: %s", context_file)
+        return ""
+    return path.read_text(encoding="utf-8").strip()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     WebDefaults.tiktok_sign_api_key = SIGN_API_KEY or None
     logger.info("Euler sign API key: %s", "on" if SIGN_API_KEY else "off")
-    comments = CommentBuffer()
-    hub = LiveStreamHub(on_comment=comments.add)
+    node = GpuNode.from_env()
+    audience = AudienceTracker()
+    embedder = OllamaEmbedder(
+        node, port=COMMENT_EMBED_PORT, url=COMMENT_EMBED_URL,
+        model=COMMENT_EMBED_MODEL, keep_alive=COMMENT_EMBED_KEEP_ALIVE,
+    ) if COMMENT_RELEVANCE else None
+    relevance = RelevanceScorer(embedder, enabled=COMMENT_RELEVANCE)
+    comments = CommentBuffer(relevance=relevance, audience=audience)
+
+    async def handle_gift(payload: dict[str, Any]) -> None:
+        await audience.handle_gift(payload)
+        await comments.notify_priority_changed()
+
+    async def handle_follow(payload: dict[str, Any]) -> None:
+        await audience.handle_follow(payload)
+        await comments.notify_priority_changed()
+
+    hub = LiveStreamHub(
+        on_comment=comments.add, on_gift=handle_gift, on_follow=handle_follow,
+    )
     engine = None
     watch_task: asyncio.Task[None] | None = None
     agent_task: asyncio.Task[None] | None = None
     llm: OpenAICompatLLM | None = None
     audio_player: LocalAudioPlayer | None = None
+    relevance_task: asyncio.Task[None] | None = None
     try:
-        node = GpuNode.from_env()
+        relevance_task = asyncio.create_task(relevance.warmup())
         engine = create_tts_engine(node)
         if engine is not None:
             await engine.start()
@@ -86,17 +146,15 @@ async def lifespan(app: FastAPI):
                         logger.exception("Lỗi khi dọn local audio khởi động thất bại.")
 
         if AGENT_ENABLED and LLM_API_KEY:
-            prompt = AGENT_SYSTEM_PROMPT
-            if not prompt and AGENT_PROMPT_FILE:
-                with open(AGENT_PROMPT_FILE, encoding="utf-8") as prompt_file:
-                    prompt = prompt_file.read().strip()
+            prompt = resolve_system_prompt(TIKTOK_USERNAME)
             llm = OpenAICompatLLM(
                 LLM_BASE_URL, LLM_API_KEY, LLM_MODEL, LLM_TIMEOUT_SEC,
                 LLM_MAX_TOKENS, LLM_TEMPERATURE,
             )
             agent = LiveAgent(
-                llm, prompt or default_system_prompt(TIKTOK_USERNAME),
+                llm, prompt,
                 AGENT_HISTORY_TURNS, AGENT_REPLY_BUFFER,
+                live_context=load_live_context(), relevance=relevance,
             )
             app.state.agent = agent
             if AGENT_AUTO:
@@ -141,6 +199,12 @@ async def lifespan(app: FastAPI):
 
         yield
     finally:
+        if relevance_task is not None:
+            relevance_task.cancel()
+            try:
+                await relevance_task
+            except asyncio.CancelledError:
+                pass
         if agent_task is not None:
             agent_task.cancel()
             try:
@@ -173,6 +237,10 @@ async def lifespan(app: FastAPI):
                 await llm.aclose()
         except Exception:
             logger.exception("Lỗi khi đóng LLM client.")
+        try:
+            await relevance.aclose()
+        except Exception:
+            logger.exception("Lỗi khi đóng comment embedder.")
 
 
 app = FastAPI(

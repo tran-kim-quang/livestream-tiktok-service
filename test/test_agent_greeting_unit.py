@@ -136,7 +136,7 @@ class GreetingSpeechPipelineTest(unittest.IsolatedAsyncioTestCase):
         stream = _agent_audio_stream(
             agent, tts,
             {"comment": "A", "user": {"nickname": "Lan"}},
-            None, metrics=metrics,
+            None, metrics=metrics, single_shot=False,
         )
         first_audio = asyncio.create_task(anext(stream))
         await asyncio.wait_for(tts.greeting_ready.wait(), 0.2)
@@ -163,7 +163,7 @@ class GreetingSpeechPipelineTest(unittest.IsolatedAsyncioTestCase):
             EmptyLLM(), "system", 0, greeting_templates=("{name} ơi,",)
         )
         stream = _agent_audio_stream(
-            agent, tts, {"comment": "A", "user": {"nickname": "Lan"}}, None
+            agent, tts, {"comment": "A", "user": {"nickname": "Lan"}}, None, single_shot=False
         )
         self.assertEqual([chunk async for chunk in stream], [])
         self.assertEqual(tts.calls, [("Lan ơi,", TTS_FIRST_CHUNK_NUM_STEP)])

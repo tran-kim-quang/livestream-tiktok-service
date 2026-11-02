@@ -42,6 +42,12 @@ class TakeReadyChunkTest(unittest.TestCase):
         self.assertIsNone(_take_ready_chunk("Xin chào.", first=True))
         self.assertEqual(_take_ready_chunk("Xin chào. ", first=True), ("Xin chào.", " "))
 
+    def test_tag_truoc_dau_hoi_o_cung_chunk_voi_cau(self) -> None:
+        self.assertEqual(
+            _take_ready_chunk("Thật á [question-ah]? Để", first=True),
+            ("Thật á [question-ah]?", " Để"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

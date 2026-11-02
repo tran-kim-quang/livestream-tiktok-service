@@ -7,13 +7,62 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
 from fastapi import WebSocket
 from TikTokLive import TikTokLiveClient
-from TikTokLive.events import CommentEvent, ConnectEvent
+from TikTokLive.events import CommentEvent, ConnectEvent, FollowEvent, GiftEvent
 from TikTokLive.events.custom_events import DisconnectEvent, LiveEndEvent
+
+from app.comments.audience import is_backlog_event
 
 logger = logging.getLogger(__name__)
 
 OnEmpty = Callable[[str], Awaitable[None]]
 OnComment = Callable[[Dict[str, Any]], Awaitable[None]]
+OnEvent = Callable[[Dict[str, Any]], Awaitable[Any]]
+
+
+def _user_to_dict(user: Any) -> Dict[str, Any]:
+    return {
+        "id": int(user.id) if getattr(user, "id", None) else None,
+        "nickname": getattr(user, "nickname", None),
+        "unique_id": getattr(user, "unique_id", None),
+    }
+
+
+def _identity_to_dict(identity: Any) -> Dict[str, bool]:
+    if identity is None:
+        return {}
+    return {
+        "gift_giver": bool(getattr(identity, "is_gift_giver_of_anchor", False)),
+        "subscriber": bool(getattr(identity, "is_subscriber_of_anchor", False)),
+        "follower": bool(getattr(identity, "is_follower_of_anchor", False)),
+        "mutual": bool(getattr(identity, "is_mutual_following_with_anchor", False)),
+        "moderator": bool(getattr(identity, "is_moderator_of_anchor", False)),
+    }
+
+
+def _event_create_time(event: Any) -> int | None:
+    common = getattr(event, "common", None)
+    raw = getattr(common, "create_time", None) if common is not None else None
+    return int(raw) if raw else None
+
+
+def _gift_to_dict(event: GiftEvent, session_started_at: int | None) -> Dict[str, Any] | None:
+    if bool(getattr(event, "streaking", False)):
+        return None
+    gift = getattr(event, "gift", None)
+    repeat = max(int(getattr(event, "repeat_count", 0) or 1), 1)
+    diamonds = int(getattr(gift, "diamond_count", 0) or 0) * repeat
+    return {
+        "type": "gift", "user": _user_to_dict(event.user), "diamonds": diamonds,
+        "gift_name": getattr(gift, "name", None), "create_time": _event_create_time(event),
+        "session_started_at": session_started_at,
+    }
+
+
+def _follow_to_dict(event: FollowEvent, session_started_at: int | None) -> Dict[str, Any]:
+    return {
+        "type": "follow", "user": _user_to_dict(event.user),
+        "create_time": _event_create_time(event), "session_started_at": session_started_at,
+    }
 
 
 def _comment_to_dict(client: TikTokLiveClient, event: CommentEvent) -> Dict[str, Any]:
@@ -27,18 +76,18 @@ def _comment_to_dict(client: TikTokLiveClient, event: CommentEvent) -> Dict[str,
         "msg_id": str(raw_msg_id) if raw_msg_id not in (None, 0, "") else None,
         # Thời điểm TikTok tạo comment (epoch ms) — dùng để bỏ backlog lúc kết nối
         "create_time": int(raw_create_time) if raw_create_time else None,
-        "user": {
-            "id": int(u.id) if getattr(u, "id", None) else None,
-            "nickname": u.nickname,
-            "unique_id": u.unique_id,
-        },
+        "user": _user_to_dict(u),
+        "identity": _identity_to_dict(getattr(event, "user_identity", None)),
         "room_id": client.room_id,
         "streamer_unique_id": client.unique_id,
     }
 
 
 class LiveStreamSession:
-    def __init__(self, unique_id: str, on_empty: OnEmpty, on_comment: OnComment) -> None:
+    def __init__(
+        self, unique_id: str, on_empty: OnEmpty, on_comment: OnComment,
+        on_gift: OnEvent | None = None, on_follow: OnEvent | None = None,
+    ) -> None:
         self.unique_id = unique_id
         self.client = TikTokLiveClient(unique_id=unique_id)
         self.subscribers: Set[WebSocket] = set()
@@ -47,6 +96,8 @@ class LiveStreamSession:
         self._listeners_attached = False
         self._on_empty = on_empty
         self._on_comment = on_comment
+        self._on_gift = on_gift
+        self._on_follow = on_follow
         # Task vòng lặp WebSocket của TikTokLive (kết thúc khi mất kết nối / live end)
         self.task: Optional[asyncio.Task] = None
         # True khi TikTok báo live kết thúc (phân biệt với mất kết nối)
@@ -89,6 +140,26 @@ class LiveStreamSession:
             data = _comment_to_dict(self.client, event)
             data["session_started_at"] = self.started_at_ms
             await self._on_comment(data)
+            await self._broadcast(data)
+
+        @self.client.on(GiftEvent)
+        async def on_gift(event: GiftEvent) -> None:
+            data = _gift_to_dict(event, self.started_at_ms)
+            if data is None:
+                return
+            if is_backlog_event(data):
+                return
+            if self._on_gift is not None:
+                await self._on_gift(data)
+            await self._broadcast(data)
+
+        @self.client.on(FollowEvent)
+        async def on_follow(event: FollowEvent) -> None:
+            data = _follow_to_dict(event, self.started_at_ms)
+            if is_backlog_event(data):
+                return
+            if self._on_follow is not None:
+                await self._on_follow(data)
             await self._broadcast(data)
 
         @self.client.on(LiveEndEvent)
@@ -160,10 +231,15 @@ class LiveStreamSession:
 
 
 class LiveStreamHub:
-    def __init__(self, on_comment: OnComment) -> None:
+    def __init__(
+        self, on_comment: OnComment, on_gift: OnEvent | None = None,
+        on_follow: OnEvent | None = None,
+    ) -> None:
         self._sessions: Dict[str, LiveStreamSession] = {}
         self._global_lock = asyncio.Lock()
         self._on_comment = on_comment
+        self._on_gift = on_gift
+        self._on_follow = on_follow
 
     async def _release_empty(self, key: str) -> None:
         async with self._global_lock:
@@ -173,7 +249,9 @@ class LiveStreamHub:
         key = TikTokLiveClient.parse_unique_id(unique_id)
         async with self._global_lock:
             if key not in self._sessions:
-                self._sessions[key] = LiveStreamSession(key, self._release_empty, self._on_comment)
+                self._sessions[key] = LiveStreamSession(
+                    key, self._release_empty, self._on_comment, self._on_gift, self._on_follow
+                )
             return self._sessions[key]
 
     # ------------------------------------------------------------------ #

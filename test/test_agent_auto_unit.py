@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import unittest
+from unittest import mock
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -100,6 +101,8 @@ async def cancel(task: asyncio.Task) -> None:
         await task
 
 
+# Các test này kiểm tra luồng stream theo chunk
+@mock.patch("app.agent.speech.AGENT_TTS_SINGLE_SHOT", False)
 class AutoSpeakLoopTest(unittest.IsolatedAsyncioTestCase):
     async def test_order_va_audio_den_truoc_khi_llm_stream_xong(self) -> None:
         llm = ScriptedLLM([["Xin chào bạn,", " hôm nay vui nhé."]], delay=0.03)

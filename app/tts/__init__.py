@@ -7,6 +7,7 @@ from app.config import (
     TTS_ENABLED,
     TTS_MAX_CONCURRENCY,
     TTS_NUM_STEP,
+    TTS_SPEED,
     TTS_TIMEOUT_SEC,
     TTS_VOICE_ID,
     VOICESTUDIO_API_KEY,
@@ -36,6 +37,6 @@ def create_tts_engine(node: Optional[GpuNode] = None) -> Optional[TTSEngine]:
     if TTS_ENGINE == "voicestudio":
         return VoiceStudioTTS(
             gpu, port=VOICESTUDIO_API_PORT, api_key=VOICESTUDIO_API_KEY,
-            num_step=TTS_NUM_STEP, **common,
+            num_step=TTS_NUM_STEP, speed=TTS_SPEED, **common,
         )
     raise ValueError(f"TTS_ENGINE không hợp lệ: {TTS_ENGINE!r}")

@@ -28,6 +28,7 @@ async def health(
             "accepted": comment_stats["accepted"],
             "served": comment_stats["served"],
             "expired": comment_stats["expired"],
+            "relevance": comment_stats["relevance"],
         },
         "sessions": hub.list_sessions(),
         "auto_watch": TIKTOK_USERNAME or None,

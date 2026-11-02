@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import unittest
+from unittest import mock
 from typing import Any
 
 os.environ["TIKTOK_USERNAME"] = ""
@@ -95,6 +96,8 @@ class OneComment:
         await asyncio.sleep(10)
 
 
+# Các test này kiểm tra luồng stream theo chunk
+@mock.patch("app.agent.speech.AGENT_TTS_SINGLE_SHOT", False)
 class LocalAutoLoopTest(unittest.IsolatedAsyncioTestCase):
     async def test_local_la_listener_phat_dung_thu_tu_va_drain_de_pacing(self) -> None:
         player = FakePlayer()
@@ -148,6 +151,8 @@ class LocalAutoLoopTest(unittest.IsolatedAsyncioTestCase):
                 await task
 
 
+# Các test này kiểm tra luồng stream theo chunk
+@mock.patch("app.agent.speech.AGENT_TTS_SINGLE_SHOT", False)
 class LocalAgentApiTest(unittest.TestCase):
     def setUp(self) -> None:
         self.app = FastAPI()

@@ -15,6 +15,7 @@ from app.config import (
     COMMENT_MSG_ID_TTL_SEC,
     COMMENT_SKIP_BACKLOG,
 )
+from app.comments.audience import user_key
 
 URL_RE = re.compile(
     r"(?:https?://|www\.)\S+|\b(?:[\w-]+\.)+[a-z]{2,24}(?:/\S*)?",
@@ -155,8 +156,4 @@ class CommentFilter:
 
     @staticmethod
     def _user_key(comment: Mapping[str, Any]) -> str:
-        user = comment.get("user") or {}
-        if not isinstance(user, Mapping):
-            return ""
-        value = user.get("id") or user.get("unique_id")
-        return str(value).lower() if value is not None else ""
+        return user_key(comment)

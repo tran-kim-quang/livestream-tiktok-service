@@ -63,7 +63,9 @@ Comment được xử lý ngay khi nhận từ TikTok, hoàn toàn trong RAM. Se
 
 Các comment chưa được trả lời của cùng user được gộp trong `COMMENT_MERGE_WINDOW_SEC`, tối đa `COMMENT_MERGE_MAX_PARTS` phần và không vượt `COMMENT_MAX_CHARS`. Ví dụ `saberg_6` gửi “sao troll rồi”, rồi 4 giây sau gửi “trả giá vì troll rồi” thì queue giữ một bản ghi `sao troll rồi. trả giá vì troll rồi`, kèm `parts`, `msg_ids` và `merged`.
 
-Comment hợp lệ được cộng điểm khi có dấu hiệu câu hỏi tiếng Việt, nội dung có ý nghĩa dài hơn, nhắc streamer hoặc chứa `COMMENT_PRIORITY_KEYWORDS`. `/api/queue/pop` chọn điểm cao nhất trong cửa sổ mới; bằng điểm thì chọn comment đến sau. Sau khi một user được phục vụ, comment tiếp theo của họ vẫn nằm trong buffer nhưng được tạm bỏ qua trong `COMMENT_USER_COOLDOWN_SEC`, để user khác có cơ hội được trả lời; hết cooldown comment tự đủ điều kiện trở lại nếu vẫn còn mới. Mỗi bản ghi chỉ phục vụ một lần. Đặt `COMMENT_MAX_SERVE_PER_SEC=0` để không giới hạn tốc độ agent lấy comment.
+Comment hợp lệ được so embedding với các dòng ngữ cảnh trong `COMMENT_CONTEXT_FILE` (fallback `AGENT_PROMPT_FILE`) qua Ollama trên máy GPU. Điểm chọn là `similarity_core * COMMENT_CORE_WEIGHT + audience_bonus`; khi Ollama chưa sẵn sàng, lỗi hoặc timeout, service tự dùng heuristic câu hỏi/độ dài cũ đã chuẩn hoá về `[0,1]`. Gift, follow và các cờ subscriber/follower/moderator cộng bonus tại lúc chọn, nên gift đến sau comment vẫn tăng ưu tiên. Gift/follow vừa xảy ra còn cho user bỏ qua cooldown trong `COMMENT_PRIORITY_WINDOW_SEC`; cờ identity lịch sử chỉ cộng điểm, không bỏ qua cooldown.
+
+Ollama dùng model `qwen3-embedding:0.6b`, mặc định chạy trên **CPU** của máy GPU (`COMMENT_EMBED_NUM_GPU=0`, ~30 ms/comment) để nhường VRAM cho VoiceStudio, và đi tới máy GPU giống VoiceStudio: trực tiếp theo `GPU_HOST`, hoặc một SSH tunnel riêng tới port 11434. `COMMENT_EMBED_URL` ghi đè đường đi này. Warmup chạy nền và tự thử lại; `/health` cùng `/api/comments/stats` hiển thị trạng thái model, số passage và bộ đếm fallback. Mẫu ngữ cảnh ngắn nằm ở `context/live_context.example.md`.
 
 ## Tích hợp agent
 
@@ -94,6 +96,15 @@ system prompt bằng `AGENT_SYSTEM_PROMPT` hoặc file `AGENT_PROMPT_FILE`.
 Prompt mặc định yêu cầu vẫn trả lời comment thô tục, chửi bậy hoặc khiêu khích
 một cách lịch sự, bình tĩnh và hài hước nhẹ nhàng, không lặp lại lời tục hay
 đáp trả gay gắt; có thể lái câu trả lời về nội dung buổi live.
+
+### Biểu cảm giọng đọc
+
+Mặc định nội dung `context/tts_style_guide.md` được nối vào mọi system prompt,
+kể cả prompt tuỳ chỉnh. Đặt `AGENT_TTS_GUIDE_FILE=` để tắt. OmniVoice hiểu các
+tag biểu cảm như `[laughter]`, `[sigh]`, `[surprise-ah]` và `[question-ah]`;
+service chỉ giữ tối đa `AGENT_TTS_MAX_TAGS` tag hợp lệ trong mỗi reply (mặc định
+1). Trước khi đọc và lưu history, service bỏ emoji, markdown, stage direction,
+tag lạ và dấu `!`/`?` lặp. `[pause 500ms]` không được hỗ trợ và sẽ bị bỏ.
 
 ```bash
 curl -X POST http://localhost:8002/api/agent/reply \
@@ -354,6 +365,19 @@ python test/test_tts_stream.py --play
 | `COMMENT_MAX_AGE_SEC` | `30` | Tuổi tối đa trước khi loại khỏi buffer |
 | `COMMENT_FRESH_WINDOW_SEC` | `15` | Cửa sổ comment đủ mới để `/queue/pop` chọn |
 | `COMMENT_MAX_SERVE_PER_SEC` | `0` | Giới hạn lượt pop mỗi giây; `0` là không giới hạn |
+| `COMMENT_RELEVANCE` | `true` | Bật similarity core qua Ollama |
+| `COMMENT_EMBED_MODEL` / `COMMENT_EMBED_PORT` | `qwen3-embedding:0.6b` / `11434` | Model và port embedding trên GPU |
+| `COMMENT_EMBED_URL` | rỗng | URL Ollama trực tiếp ghi đè GPU/SSH |
+| `COMMENT_EMBED_KEEP_ALIVE` / `COMMENT_EMBED_TIMEOUT_SEC` | `30m` / `0.5` | Giữ model và timeout comment |
+| `COMMENT_EMBED_NUM_GPU` | `0` | Layer Ollama đưa lên GPU; `0` = chạy CPU máy GPU, trống = Ollama tự chọn |
+| `COMMENT_CONTEXT_FILE` | fallback `AGENT_PROMPT_FILE` | File passage ngữ cảnh UTF-8 |
+| `COMMENT_SIM_FLOOR` / `COMMENT_SIM_CEIL` | `0.30` / `0.70` | Khoảng cosine ánh xạ sang core |
+| `COMMENT_CORE_WEIGHT` | `10.0` | Trọng số core trong tổng điểm |
+| `COMMENT_BONUS_GIFT` / `COMMENT_BONUS_FOLLOW` | `4.0` / `2.0` | Bonus gift tối đa và follow gần đây |
+| `COMMENT_BONUS_SUBSCRIBER` / `COMMENT_BONUS_GIFT_GIVER` | `1.5` / `1.0` | Bonus identity subscriber/gifter |
+| `COMMENT_BONUS_FOLLOWER` / `COMMENT_BONUS_MODERATOR` | `0.5` / `0.5` | Bonus identity follower/moderator |
+| `COMMENT_GIFT_HALF_LIFE_SEC` / `COMMENT_GIFT_DIAMOND_CAP` | `300` / `500` | Decay và cap diamonds |
+| `COMMENT_PRIORITY_WINDOW_SEC` | `600` | Cửa sổ gift/follow và bypass cooldown; `0` = suốt process |
 | `GPU_HOST` | `local` | `local`, IP LAN/Tailscale hoặc hostname GPU |
 | `GPU_NAME` | rỗng | Tên hiển thị máy GPU trong log/health |
 | `GPU_LOCAL_HOST` | `127.0.0.1` | Địa chỉ thật khi `GPU_HOST=local` |
@@ -370,6 +394,7 @@ python test/test_tts_stream.py --play
 | `TTS_VOICE_ID` | rỗng | Voice ID mặc định; rỗng dùng default của VoiceStudio |
 | `TTS_FIRST_CHUNK_MAX_WORDS` | `6` | Số từ tối đa ưu tiên cho chunk đầu |
 | `TTS_FIRST_CHUNK_NUM_STEP` | `8` | `num_step` của chunk đầu; rỗng/`0` dùng mặc định engine |
+| `TTS_SPEED` | `1.2` | Tốc độ đọc gửi tới VoiceStudio (1.0 = bình thường) |
 | `TTS_NUM_STEP` | rỗng | `num_step` gửi tới OmniVoice; rỗng dùng mặc định engine |
 | `TTS_MAX_CONCURRENCY` | `1` | Số request TTS song song, bảo vệ GPU dùng chung |
 | `TTS_TIMEOUT_SEC` | `120` | Timeout gọi VoiceStudio (giây) |
@@ -395,6 +420,11 @@ python test/test_tts_stream.py --play
 | `AGENT_PLAYED_ACK_GRACE_SEC` | `3` | Thời gian grace ngoài `audio_sec` để chờ bridge ACK `played` |
 | `AGENT_SYSTEM_PROMPT` | rỗng | System prompt ghi đè trực tiếp |
 | `AGENT_PROMPT_FILE` | rỗng | File system prompt, dùng khi prompt trực tiếp rỗng |
-| `AGENT_HISTORY_TURNS` | `6` | Số cặp comment/reply giữ làm ngữ cảnh |
+| `AGENT_TTS_GUIDE_FILE` | `context/tts_style_guide.md` | File hướng dẫn nối vào mọi system prompt; rỗng để tắt |
+| `AGENT_TTS_SINGLE_SHOT` | `1` | Chờ LLM trả xong rồi đọc greeting + reply bằng một lần TTS; `0` để stream theo chunk |
+| `AGENT_TTS_MAX_TAGS` | `1` | Số tag biểu cảm tối đa mỗi reply; `0` để bỏ toàn bộ |
+| `AGENT_HISTORY_TURNS` | `0` | Số cặp comment/reply giữ làm ngữ cảnh; `0` = mỗi comment độc lập |
+| `AGENT_NAME` | `Bomne` | Tên trợ lý trong system prompt mặc định |
+| `AGENT_CONTEXT_SIM_THRESHOLD` | `0.4` | Similarity với live context từ ngưỡng này: gửi kèm `COMMENT_CONTEXT_FILE` và chỉ trả lời theo đó; dưới ngưỡng: chat bình thường |
 | `AGENT_REPLY_BUFFER` | `50` | Số reply gần đây giữ trong RAM |
 | `LIVESTREAM_SERVICE_PORT` | `8002` | Port expose ra ngoài |

@@ -60,6 +60,10 @@ TikTok Live ──WebSocket──▶ LiveHub (app/live)
   - `create_time` (epoch ms) lấy từ `event.common.create_time`, dùng để bỏ backlog.
   - `user.nickname` là tên hiển thị; `user.unique_id` là handle `@…`.
   - `session_started_at`: thời điểm (ms) phiên kết nối bắt đầu, gán trước `client.start()`.
+- Hub cũng nghe `GiftEvent` và `FollowEvent`, chuẩn hoá cùng dạng user, loại backlog bằng
+  cùng mốc `session_started_at`, rồi vừa cập nhật `AudienceTracker` vừa broadcast qua
+  WebSocket. Gift đang streak bị bỏ qua cho tới event `repeat_end`; lúc đó diamonds bằng
+  `diamond_count * repeat_count`.
 - Watcher (`auto_watch`) chờ trên `session.task` thay vì `client.start()`, vì `start()` trả về trước khi WebSocket kết nối xong.
   - Nếu nhận được event live end → log "live kết thúc", chờ `TIKTOK_LIVE_RETRY_SEC` rồi thử lại.
   - Nếu mất kết nối mà live chưa kết thúc → kết nối lại sau 3 giây.
@@ -97,19 +101,39 @@ Buffer chạy trong bộ nhớ (không dùng Redis), dung lượng `COMMENT_BUFF
 ### 4.1 Gộp comment liên tiếp (merge)
 Nếu một người gửi thêm comment trong khi comment trước của họ **chưa được phục vụ** và còn trong `COMMENT_MERGE_WINDOW_SEC` (10 s), comment mới được nối vào record cũ. Mỗi record gộp tối đa `COMMENT_MERGE_MAX_PARTS` (3) phần. Record gộp giữ `parts` và `msg_ids`, và được chấm điểm lại trên nội dung đã gộp.
 
-### 4.2 Chấm điểm (`scoring.py`)
-| Tiêu chí | Điểm |
-|---|---|
-| Có dấu `?` | +3.0 |
-| Có từ để hỏi (không, sao, gì, bao nhiêu, ở đâu, khi nào, làm sao, thế nào, được không, ai…) | +2.0 |
-| Độ dài có nghĩa (tối đa 100 ký tự) | +0.04 / ký tự |
-| Nhắc tới streamer | +1.5 |
-| Chứa `COMMENT_PRIORITY_KEYWORDS` | +1.0 |
+### 4.2 Chấm điểm relevance và audience
+
+Ollama trên máy GPU (`qwen3-embedding:0.6b`, gọi API gốc `/api/embed` với
+`options.num_gpu=0` nên chạy trên **CPU** của máy đó: ~31 ms/comment, 0 VRAM) embed từng dòng
+trong `COMMENT_CONTEXT_FILE` (fallback `AGENT_PROMPT_FILE`) bằng một request batch khi warmup.
+Không đặt lên GPU vì card 6 GB không chứa nổi cả OmniVoice và model embedding (+1,4 GB): đã đo
+thấy TTS bị CUDA OOM khi hai model cùng nằm trong VRAM. Dòng tiêu đề `#` và dòng
+dưới 4 từ bị bỏ: passage quá ngắn/chung chung ("Elen live") làm comment nào cũng có similarity
+cao. Mỗi comment dùng một request (~55 ms qua SSH tunnel); cosine lớn nhất với passage được
+đưa về core `[0,1]`:
+
+```text
+core = clamp((similarity - COMMENT_SIM_FLOOR)
+             / (COMMENT_SIM_CEIL - COMMENT_SIM_FLOOR), 0, 1)
+total = core * COMMENT_CORE_WEIGHT + audience_bonus
+```
+
+Mặc định floor/ceil là 0,30/0,70 và core weight là 10. Nếu embedding tắt, chưa sẵn
+sàng, lỗi, timeout hoặc circuit breaker đang mở, fallback là
+`min(scoring.score(comment) / 11.5, 1)`. Circuit breaker ngừng gọi Ollama 30 giây sau
+ba lỗi liên tiếp; warmup chạy nền và tự thử lại khi tunnel chưa sẵn sàng. Ollama nhả model
+sau `COMMENT_EMBED_KEEP_ALIVE` (30 phút) không dùng; lần nạp lại mất vài giây, vượt timeout
+0,5 s của comment, nên khi gặp timeout service gửi nền một request nạp lại (timeout 30 s).
+
+Audience bonus được tính lại ngay lúc `next()`/`latest()`: gift theo thang log và
+decay half-life, follow gần đây +2, subscriber +1,5, gift-giver lịch sử +1,
+follower +0,5 và moderator +0,5. Vì vậy gift đến sau comment vẫn thay đổi thứ tự.
+Record merge giữ core của từng phần và dùng core cao nhất.
 
 ### 4.3 `next()` — lấy comment để trả lời
 1. Bỏ các record quá `COMMENT_MAX_AGE_SEC` (30 s).
 2. Chỉ xét record nhận trong `COMMENT_FRESH_WINDOW_SEC` (15 s) gần nhất. Record cũ hơn không được chọn và sẽ hết hạn ở bước 1.
-3. **Cooldown theo người dùng**: người vừa được trả lời trong `COMMENT_USER_COOLDOWN_SEC` (8 s) bị **tạm bỏ qua chứ không bị xoá**. Cooldown tính từ lúc comment được phục vụ, không phải lúc nhận.
+3. **Cooldown theo người dùng**: người vừa được trả lời trong `COMMENT_USER_COOLDOWN_SEC` (8 s) bị **tạm bỏ qua chứ không bị xoá**. User có gift/follow session trong `COMMENT_PRIORITY_WINDOW_SEC` được bỏ qua cooldown; `0` nghĩa là suốt vòng đời process. Các cờ identity lịch sử chỉ cộng bonus, không bypass. Thời điểm served vẫn được ghi lại cho user bypass.
 4. Chọn record điểm cao nhất; nếu bằng điểm thì chọn record mới hơn.
 
 Kết hợp merge (4.1) và cooldown tính từ lúc phục vụ (4.3), comment thứ hai của cùng một người không bị bỏ oan:
@@ -137,7 +161,12 @@ Kết hợp merge (4.1) và cooldown tính từ lúc phục vụ (4.3), comment 
   - Trả lời ngắn, tự nhiên, phù hợp để đọc thành tiếng.
   - Comment thô tục vẫn phải trả lời một cách lịch sự, hài hước nhẹ nhàng; không bao giờ trả về rỗng.
   - Khi bật greeting: thêm lệnh "KHÔNG chào", vì lời chào do service tự sinh.
-- Mỗi lượt user có dạng `Người xem: <tên>\nComment: <nội dung>`. History giữ `AGENT_HISTORY_TURNS` lượt gần nhất. Lời chào không được lưu vào history.
+- Mỗi lượt user có dạng `Người xem: <tên>\nComment: <nội dung>`. History giữ `AGENT_HISTORY_TURNS` lượt gần nhất (mặc định 0 = mỗi comment độc lập). Lời chào không được lưu vào history.
+- Live context theo từng comment: agent lấy `similarity` của comment (từ buffer; comment gọi qua API thì embed ngay).
+  - `similarity >= AGENT_CONTEXT_SIM_THRESHOLD` (0.4): nội dung `COMMENT_CONTEXT_FILE` được nối vào lượt user, kèm chỉ dẫn chỉ trả lời theo context, không có thì nói không biết (`context_mode=context`).
+  - Dưới ngưỡng: không gửi context, chỉ dẫn trò chuyện bình thường (`context_mode=chat`).
+  - Không có similarity (embedding lỗi/chưa sẵn sàng): gửi context kèm chỉ dẫn kết hợp (`context_mode=unknown`).
+  - Record reply có thêm `similarity` và `context_mode`.
 - Các reply gần nhất nằm trong ring buffer `AGENT_REPLY_BUFFER`, xem qua `GET /api/agent/replies`.
 
 ### 5.3 Tên đọc được (`speakable_name`)
@@ -166,6 +195,29 @@ t=0  comment ──┬─▶ TTS(greeting, num_step=8)  ────────
 - **num_step**: chunk đầu (gồm greeting) dùng `TTS_FIRST_CHUNK_NUM_STEP` (8) để có tiếng nhanh hơn; các chunk sau dùng `TTS_NUM_STEP`.
 - **Prefetch**: queue audio có `maxsize=2`, nên GPU tổng hợp chunk kế tiếp trong lúc chunk trước đang phát. `TTS_MAX_CONCURRENCY` giới hạn số request tới GPU, vì GPU dùng chung với job render.
 - **Định dạng audio**: PCM 24 kHz, s16le, mono.
+
+### 6.1 Guide và sanitizer TTS
+
+`AGENT_TTS_GUIDE_FILE` (mặc định `context/tts_style_guide.md`) được đọc sau khi
+system prompt đã được chọn và nối vào cả prompt mặc định lẫn prompt tuỳ chỉnh.
+Giá trị rỗng tắt guide; file đã cấu hình nhưng không tồn tại chỉ tạo một warning.
+
+Mỗi reply có một sanitizer dùng chung ngân sách `AGENT_TTS_MAX_TAGS`. Sanitizer
+chạy trên từng chunk ngay trước queue TTS và trên toàn reply trước khi lưu
+history/API: giữ tag hợp lệ trong ngân sách, bỏ ngoặc vuông khác, stage direction
+ngắn, emoji/pictograph và marker markdown, rồi chuẩn hoá dấu câu và khoảng trắng.
+Chunk không còn nội dung đọc được sẽ không được gửi sang TTS.
+
+| Tag hỗ trợ | Ý nghĩa |
+|---|---|
+| `[laughter]`, `[sigh]` | Cười, thở dài |
+| `[confirmation-en]` | Xác nhận |
+| `[question-en]`, `[question-ah]`, `[question-oh]`, `[question-ei]`, `[question-yi]` | Ngữ điệu hỏi |
+| `[surprise-ah]`, `[surprise-oh]`, `[surprise-wa]`, `[surprise-yo]` | Ngạc nhiên |
+| `[dissatisfaction-hnn]` | Chưa hài lòng |
+
+Tag chỉ hợp lệ khi viết thường đúng như bảng. `[pause]` và `[pause 500ms]`
+không được route VoiceStudio này hỗ trợ, nên sanitizer luôn bỏ chúng.
 
 Độ trễ đo trên live thật (@elenanh235, LLM `gemma4:31b-cloud` qua Ollama Cloud):
 
@@ -267,6 +319,19 @@ Giá trị mặc định lấy từ `app/config.py`. Mẫu đầy đủ ở `.en
 | `COMMENT_USER_COOLDOWN_SEC` | 8 | Cooldown mỗi người, tính từ lúc được trả lời |
 | `COMMENT_MERGE_WINDOW_SEC` / `COMMENT_MERGE_MAX_PARTS` | 10 / 3 | Cửa sổ gộp và số phần gộp tối đa |
 | `COMMENT_MAX_SERVE_PER_SEC` | 0 | Giới hạn tốc độ phục vụ (0 = không giới hạn) |
+| `COMMENT_RELEVANCE` | true | Bật similarity core qua Ollama; tắt thì luôn dùng heuristic |
+| `COMMENT_EMBED_MODEL` / `COMMENT_EMBED_PORT` | `qwen3-embedding:0.6b` / 11434 | Model và port Ollama trên GPU |
+| `COMMENT_EMBED_URL` | — | URL trực tiếp ghi đè GPU/SSH tunnel |
+| `COMMENT_EMBED_KEEP_ALIVE` / `COMMENT_EMBED_TIMEOUT_SEC` | `30m` / 0,5 | Thời gian giữ model và timeout mỗi comment |
+| `COMMENT_EMBED_NUM_GPU` | 0 | Số layer Ollama đưa lên GPU; 0 = CPU, trống = Ollama tự chọn |
+| `COMMENT_CONTEXT_FILE` | fallback `AGENT_PROMPT_FILE` | File passage ngữ cảnh UTF-8 |
+| `COMMENT_SIM_FLOOR` / `COMMENT_SIM_CEIL` | 0,30 / 0,70 | Khoảng cosine ánh xạ sang core `[0,1]` |
+| `COMMENT_CORE_WEIGHT` | 10 | Trọng số relevance core trong total |
+| `COMMENT_BONUS_GIFT` / `COMMENT_BONUS_FOLLOW` | 4 / 2 | Bonus gift tối đa và follow gần đây |
+| `COMMENT_BONUS_SUBSCRIBER` / `COMMENT_BONUS_GIFT_GIVER` | 1,5 / 1 | Bonus identity subscriber/gifter lịch sử |
+| `COMMENT_BONUS_FOLLOWER` / `COMMENT_BONUS_MODERATOR` | 0,5 / 0,5 | Bonus identity follower/moderator |
+| `COMMENT_GIFT_HALF_LIFE_SEC` / `COMMENT_GIFT_DIAMOND_CAP` | 300 / 500 | Decay và mức cap log của diamonds |
+| `COMMENT_PRIORITY_WINDOW_SEC` | 600 | Cửa sổ follow/gift bonus và bypass cooldown; 0 = suốt process |
 
 ### GPU và TTS
 | Biến | Mặc định | Ý nghĩa |
@@ -276,6 +341,7 @@ Giá trị mặc định lấy từ `app/config.py`. Mẫu đầy đủ ở `.en
 | `VOICESTUDIO_PORT` / `VOICESTUDIO_API_PORT` | 8080 / 3900 | Port của VoiceStudio trên máy GPU |
 | `TTS_ENABLED` / `TTS_ENGINE` | true / voicestudio | Bật TTS và chọn engine |
 | `TTS_VOICE_ID` | — | Giọng đọc; để trống thì dùng giọng mặc định của VoiceStudio |
+| `TTS_SPEED` | 1.2 | Tốc độ đọc (1.0 = bình thường) |
 | `TTS_NUM_STEP` | — | num_step cho các chunk sau chunk đầu |
 | `TTS_FIRST_CHUNK_NUM_STEP` | 8 | num_step cho chunk đầu |
 | `TTS_FIRST_CHUNK_MAX_WORDS` | 6 | Số từ tối đa của chunk đầu |
@@ -298,6 +364,9 @@ Giá trị mặc định lấy từ `app/config.py`. Mẫu đầy đủ ở `.en
 | `AGENT_REPLY_GAP_SEC` | 0.6 | Khoảng nghỉ giữa hai reply |
 | `AGENT_PLAYED_ACK_GRACE_SEC` | 3 | Thời gian chờ thêm cho ack `played` |
 | `AGENT_SYSTEM_PROMPT` / `AGENT_PROMPT_FILE` | — | System prompt tuỳ chỉnh |
+| `AGENT_TTS_GUIDE_FILE` | `context/tts_style_guide.md` | Guide nối vào mọi system prompt; rỗng để tắt |
+| `AGENT_TTS_SINGLE_SHOT` | 1 | 1 = một lần TTS cho cả greeting + reply (num_step = `TTS_NUM_STEP`); 0 = stream theo chunk như mục trên |
+| `AGENT_TTS_MAX_TAGS` | 1 | Số tag biểu cảm tối đa mỗi reply; 0 = bỏ toàn bộ |
 | `AGENT_HISTORY_TURNS` / `AGENT_REPLY_BUFFER` | 6 / 50 | Số lượt history và số reply lưu lại |
 
 ### Audio
