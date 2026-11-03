@@ -14,7 +14,7 @@ from app.agent.llm import OpenAICompatLLM
 from app.agent.names import speakable_name
 from app.agent.tts_text import sanitize_for_tts
 from app.config import (
-    AGENT_CONTEXT_SIM_THRESHOLD, AGENT_GREETING, AGENT_GREETING_TEMPLATES, AGENT_NAME,
+    AGENT_CHAT_STEER_RATIO, AGENT_CONTEXT_SIM_THRESHOLD, AGENT_GREETING, AGENT_GREETING_TEMPLATES, AGENT_NAME,
     AGENT_TTS_MAX_TAGS,
 )
 
@@ -215,7 +215,10 @@ class LiveAgent:
     async def _similarity(self, comment: Mapping[str, Any]) -> float | None:
         """Similarity với live context: lấy từ buffer, hoặc embed ngay (comment gọi qua API)."""
         value = comment.get("similarity")
-        if value is None and self._relevance is not None and self.live_context:
+        if (
+            value is None and not comment.get("embedding_checked")
+            and self._relevance is not None and self.live_context
+        ):
             text = str(comment.get("comment") or "").strip()
             if text:
                 value = await self._relevance.similarity(text)
@@ -241,7 +244,11 @@ class LiveAgent:
                 "thông tin trên, không có thì nói là mình không biết; còn lại thì trò chuyện bình thường."
             )
         if mode == "chat":
-            return "Đây là chat bình thường: trò chuyện tự nhiên, thân thiện với người xem."
+            note = "Đây là chat bình thường, kiểu chat chit: trả lời một câu ngắn, khoảng 20 từ, ấm áp và vui vẻ."
+            random_value = self._rng.random() if hasattr(self._rng, "random") else 1.0
+            if random_value < AGENT_CHAT_STEER_RATIO:
+                note += " Khéo léo lái câu chuyện trở lại nội dung buổi live."
+            return note
         return ""
 
     def _messages(
@@ -279,10 +286,28 @@ class LiveAgent:
             "context_mode": self.context_mode(similarity),
             "latency_ms": latency_ms,
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "kind": str(comment.get("lane") or "question"), "llm": True,
         }
         async with self._lock:
             if self.history_turns:
                 self._history.append((user_message, llm_reply))
+            self._replies.append(record)
+            self._replied += 1
+            self._latency_total_ms += latency_ms
+        return record
+
+    async def record_template(
+        self, comment: Mapping[str, Any], reply: str, kind: str,
+        *, batch: list[Mapping[str, Any]] | None = None, latency_ms: int = 0,
+    ) -> dict[str, Any]:
+        record = {
+            "comment": dict(comment), "batch": [dict(item) for item in (batch or [comment])],
+            "display_name": self.display_name(comment), "reply": reply,
+            "similarity": comment.get("similarity"), "context_mode": kind,
+            "latency_ms": latency_ms, "created_at": datetime.now(timezone.utc).isoformat(),
+            "kind": kind, "llm": False,
+        }
+        async with self._lock:
             self._replies.append(record)
             self._replied += 1
             self._latency_total_ms += latency_ms

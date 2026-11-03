@@ -163,7 +163,7 @@ Kết hợp merge (4.1) và cooldown tính từ lúc phục vụ (4.3), comment 
   - Khi bật greeting: thêm lệnh "KHÔNG chào", vì lời chào do service tự sinh.
 - Mỗi lượt user có dạng `Người xem: <tên>\nComment: <nội dung>`. History giữ `AGENT_HISTORY_TURNS` lượt gần nhất (mặc định 0 = mỗi comment độc lập). Lời chào không được lưu vào history.
 - Live context theo từng comment: agent lấy `similarity` của comment (từ buffer; comment gọi qua API thì embed ngay).
-  - `similarity >= AGENT_CONTEXT_SIM_THRESHOLD` (0.4): nội dung `COMMENT_CONTEXT_FILE` được nối vào lượt user, kèm chỉ dẫn chỉ trả lời theo context, không có thì nói không biết (`context_mode=context`).
+  - `similarity >= AGENT_CONTEXT_SIM_THRESHOLD` (0.5): nội dung `COMMENT_CONTEXT_FILE` được nối vào lượt user, kèm chỉ dẫn chỉ trả lời theo context, không có thì nói không biết (`context_mode=context`).
   - Dưới ngưỡng: không gửi context, chỉ dẫn trò chuyện bình thường (`context_mode=chat`).
   - Không có similarity (embedding lỗi/chưa sẵn sàng): gửi context kèm chỉ dẫn kết hợp (`context_mode=unknown`).
   - Record reply có thêm `similarity` và `context_mode`.

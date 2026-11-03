@@ -22,6 +22,22 @@ curl http://localhost:8002/health
 
 Đặt `TIKTOK_USERNAME` (không có `@`) nếu muốn service tự theo dõi một kênh khi khởi động. Không đặt biến này thì vẫn có thể gọi `POST /api/live/watch`.
 
+### Khởi động nhanh bằng make
+
+Trên Windows 11, cài GNU Make bằng `winget install ezwinports.make` hoặc
+`choco install make`, sau đó chạy một lệnh:
+
+```powershell
+make start TIKTOK=ten_kenh
+```
+
+Lệnh sẽ chuẩn bị `.env`, chạy service, chờ health và mở audio bridge.
+Image chỉ được build tự động ở lần đầu (khi chưa có); sau khi sửa code, chạy
+`make build` hoặc `make start BUILD=1` để build lại.
+Nhấn Ctrl+C chỉ dừng bridge; service vẫn chạy nền. Các target thường dùng:
+`make status`, `make logs`, `make watch TIKTOK=kenh_khac`, `make say`,
+`make stop-audio`, `make restart` và `make stop`. Chạy `make help` để xem đầy đủ.
+
 ## Project structure
 
 ```text
@@ -275,6 +291,39 @@ loa phát hết. Endpoint `audio/stop` dừng phần đang phát và xóa hàng 
 `GET /api/agent/status` hiển thị backend, device, trạng thái và số giây đang đợi.
 Khi không chạy auto-speak, đặt rõ `AUDIO_PLAYER=auto`, `sounddevice` hoặc
 `ffplay` để player được mở sẵn cho request `play_local`.
+
+## Chat-chit, rate limit và cache
+
+Comment hợp lệ được chia thành ba lane: `question` cho câu liên quan ngữ cảnh live,
+`greeting` cho lời chào thuần và `chat` cho phần còn lại. Scheduler ưu tiên lần lượt:
+cảm ơn gift/follow, câu hỏi, lời chào đã gom batch, rồi chat. `COMMENT_QUESTIONS_ONLY=0`
+là mặc định; đặt `1` để giữ hành vi cũ, chỉ nhận câu hỏi. Đặt `AGENT_CHAT=0` để scheduler
+chỉ nói câu hỏi và lời cảm ơn; chat/greeting trong buffer sẽ tự hết hạn.
+
+Khi câu hỏi đang chờ, tổng airtime của chat + greeting không vượt
+`AGENT_CHAT_AIRTIME_RATIO=0.2` trong cửa sổ 60 giây. Ví dụ đã nói 16 giây câu hỏi thì
+một chat ước lượng 4 giây được phép vì `4 / (16 + 4) = 20%`; nếu chưa có airtime thì
+chat phải nhường câu hỏi. Khi không có câu hỏi, chat được phục vụ không cần kiểm tra tỷ lệ.
+Chat gọi LLM còn chịu token bucket 6 lượt/phút, burst 2. Mỗi user có cooldown 60 giây và
+tối đa 3 chat/greeting trong 600 giây; gift/follow mới được phép bỏ qua các giới hạn này.
+
+Lời chào thuần và cảm ơn gift/follow dùng template cố định, gom tối đa 4 tên hoặc chờ 6 giây,
+rồi tổng hợp cả câu bằng đúng một request TTS để giọng liền mạch. Gift được cảm ơn trước follow;
+hai loại không trộn chung. Cache TTS chỉ nằm trong RAM, dùng LRU theo tổng byte và single-flight
+cho các request giống nhau; restart service sẽ xoá cache.
+
+Các biến mới:
+
+- Lane: `COMMENT_CHAT_MAX_AGE_SEC=12`, `COMMENT_CHAT_USER_COOLDOWN_SEC=60`,
+  `COMMENT_CHAT_MAX_PER_USER=3`, `COMMENT_CHAT_USER_WINDOW_SEC=600`.
+- Airtime/chat: `AGENT_CHAT=1`, `AGENT_CHAT_AIRTIME_WINDOW_SEC=60`,
+  `AGENT_CHAT_AIRTIME_RATIO=0.2`, `AGENT_CHAT_RATE_PER_MIN=6`, `AGENT_CHAT_BURST=2`,
+  `AGENT_CHAT_STEER_RATIO=0.33`.
+- Greeting: `AGENT_GREETING_BATCH_SEC=6`, `AGENT_GREETING_BATCH_MAX=4`,
+  `AGENT_GREETING_MAX_WORDS=6`, `AGENT_GREETING_SIM_THRESHOLD=0.75`.
+- Cảm ơn: `AGENT_THANKS=1`, `AGENT_THANKS_BATCH_SEC=6`, `AGENT_THANKS_BATCH_MAX=4`,
+  `AGENT_THANKS_MIN_GAP_SEC=20`, `AGENT_THANKS_MIN_DIAMONDS=1`.
+- Cache: `TTS_CACHE=1`, `TTS_CACHE_MAX_MB=200`.
 
 ## Cấu hình GPU
 

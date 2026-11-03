@@ -61,6 +61,7 @@ async def agent_status(
     agent: LiveAgent | None = Depends(get_agent),
     player: LocalAudioPlayer | None = Depends(get_player),
 ) -> dict[str, Any]:
+    scheduler = getattr(agent, "scheduler", None) if agent is not None else None
     return {
         "enabled": agent is not None,
         "model": LLM_MODEL,
@@ -73,6 +74,7 @@ async def agent_status(
         "last_latencies": agent.last_latencies if agent is not None else None,
         "stats": agent.stats() if agent is not None else None,
         "player": player.info() if player is not None else None,
+        "scheduler": await scheduler.status() if scheduler is not None else None,
     }
 
 

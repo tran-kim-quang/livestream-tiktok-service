@@ -52,6 +52,16 @@ COMMENT_MAX_AGE_SEC: float = max(0.0, float(os.environ.get("COMMENT_MAX_AGE_SEC"
 COMMENT_FRESH_WINDOW_SEC: float = max(
     0.0, float(os.environ.get("COMMENT_FRESH_WINDOW_SEC", "15"))
 )
+COMMENT_CHAT_MAX_AGE_SEC: float = max(
+    0.0, float(os.environ.get("COMMENT_CHAT_MAX_AGE_SEC", "12"))
+)
+COMMENT_CHAT_USER_COOLDOWN_SEC: float = max(
+    0.0, float(os.environ.get("COMMENT_CHAT_USER_COOLDOWN_SEC", "60"))
+)
+COMMENT_CHAT_MAX_PER_USER: int = max(0, int(os.environ.get("COMMENT_CHAT_MAX_PER_USER", "3")))
+COMMENT_CHAT_USER_WINDOW_SEC: float = max(
+    0.0, float(os.environ.get("COMMENT_CHAT_USER_WINDOW_SEC", "600"))
+)
 COMMENT_MAX_SERVE_PER_SEC: float = max(
     0.0, float(os.environ.get("COMMENT_MAX_SERVE_PER_SEC", "0"))
 )
@@ -76,7 +86,7 @@ COMMENT_SIM_CEIL: float = float(os.environ.get("COMMENT_SIM_CEIL", "0.70"))
 COMMENT_CORE_WEIGHT: float = float(os.environ.get("COMMENT_CORE_WEIGHT", "10.0"))
 # 1 = chỉ nhận comment liên quan live context (similarity >= AGENT_CONTEXT_SIM_THRESHOLD);
 # khi embedding không khả dụng thì chỉ nhận comment có dạng câu hỏi
-COMMENT_QUESTIONS_ONLY = _truthy("COMMENT_QUESTIONS_ONLY", True)
+COMMENT_QUESTIONS_ONLY = _truthy("COMMENT_QUESTIONS_ONLY", False)
 
 # Ưu tiên khán giả trong phiên live.
 COMMENT_BONUS_GIFT: float = float(os.environ.get("COMMENT_BONUS_GIFT", "4.0"))
@@ -131,6 +141,8 @@ TTS_VOICE_ID: str = os.environ.get("TTS_VOICE_ID", "")
 TTS_TIMEOUT_SEC: float = float(os.environ.get("TTS_TIMEOUT_SEC", "120"))
 # Số request TTS chạy song song tới GPU (GPU dùng chung với job render video)
 TTS_MAX_CONCURRENCY: int = max(1, int(os.environ.get("TTS_MAX_CONCURRENCY", "1")))
+TTS_CACHE: bool = _truthy("TTS_CACHE", True)
+TTS_CACHE_MAX_MB: float = max(0.0, float(os.environ.get("TTS_CACHE_MAX_MB", "200")))
 
 # ── Phát audio trên máy local ─────────────────────────────────────────────────
 AUDIO_PLAYER_EXPLICIT: bool = "AUDIO_PLAYER" in os.environ
@@ -195,5 +207,38 @@ AGENT_HISTORY_TURNS: int = max(0, int(os.environ.get("AGENT_HISTORY_TURNS", "0")
 # Tên trợ lý trong system prompt mặc định
 AGENT_NAME: str = os.environ.get("AGENT_NAME", "Bomne").strip() or "Bomne"
 # Similarity >= ngưỡng → trả lời theo live context; dưới ngưỡng → chat bình thường
-AGENT_CONTEXT_SIM_THRESHOLD: float = float(os.environ.get("AGENT_CONTEXT_SIM_THRESHOLD", "0.4"))
+AGENT_CONTEXT_SIM_THRESHOLD: float = float(os.environ.get("AGENT_CONTEXT_SIM_THRESHOLD", "0.5"))
 AGENT_REPLY_BUFFER: int = max(1, int(os.environ.get("AGENT_REPLY_BUFFER", "50")))
+AGENT_CHAT: bool = _truthy("AGENT_CHAT", True)
+AGENT_CHAT_AIRTIME_WINDOW_SEC: float = max(
+    0.0, float(os.environ.get("AGENT_CHAT_AIRTIME_WINDOW_SEC", "60"))
+)
+AGENT_CHAT_AIRTIME_RATIO: float = max(
+    0.0, min(1.0, float(os.environ.get("AGENT_CHAT_AIRTIME_RATIO", "0.2")))
+)
+AGENT_CHAT_RATE_PER_MIN: float = max(
+    0.0, float(os.environ.get("AGENT_CHAT_RATE_PER_MIN", "6"))
+)
+AGENT_CHAT_BURST: float = max(0.0, float(os.environ.get("AGENT_CHAT_BURST", "2")))
+AGENT_CHAT_STEER_RATIO: float = max(
+    0.0, min(1.0, float(os.environ.get("AGENT_CHAT_STEER_RATIO", "0.33")))
+)
+AGENT_GREETING_BATCH_SEC: float = max(
+    0.0, float(os.environ.get("AGENT_GREETING_BATCH_SEC", "6"))
+)
+AGENT_GREETING_BATCH_MAX: int = max(1, int(os.environ.get("AGENT_GREETING_BATCH_MAX", "4")))
+AGENT_GREETING_MAX_WORDS: int = max(1, int(os.environ.get("AGENT_GREETING_MAX_WORDS", "6")))
+AGENT_GREETING_SIM_THRESHOLD: float = max(
+    0.0, min(1.0, float(os.environ.get("AGENT_GREETING_SIM_THRESHOLD", "0.75")))
+)
+AGENT_THANKS: bool = _truthy("AGENT_THANKS", True)
+AGENT_THANKS_BATCH_SEC: float = max(
+    0.0, float(os.environ.get("AGENT_THANKS_BATCH_SEC", "6"))
+)
+AGENT_THANKS_BATCH_MAX: int = max(1, int(os.environ.get("AGENT_THANKS_BATCH_MAX", "4")))
+AGENT_THANKS_MIN_GAP_SEC: float = max(
+    0.0, float(os.environ.get("AGENT_THANKS_MIN_GAP_SEC", "20"))
+)
+AGENT_THANKS_MIN_DIAMONDS: float = max(
+    0.0, float(os.environ.get("AGENT_THANKS_MIN_DIAMONDS", "1"))
+)

@@ -4,6 +4,8 @@ from typing import Optional
 
 from app.config import (
     TTS_ENGINE,
+    TTS_CACHE,
+    TTS_CACHE_MAX_MB,
     TTS_ENABLED,
     TTS_MAX_CONCURRENCY,
     TTS_NUM_STEP,
@@ -16,10 +18,11 @@ from app.config import (
 )
 from app.gpu import GpuNode
 from app.tts.base import TTSEngine, TTSError, VoiceNotFoundError
+from app.tts.cache import CachedTTSEngine
 from app.tts.pyramid import PyramidVideoTTS
 from app.tts.voicestudio import VoiceStudioTTS
 
-__all__ = ["TTSEngine", "TTSError", "VoiceNotFoundError", "PyramidVideoTTS", "VoiceStudioTTS", "create_tts_engine"]
+__all__ = ["TTSEngine", "TTSError", "VoiceNotFoundError", "CachedTTSEngine", "PyramidVideoTTS", "VoiceStudioTTS", "create_tts_engine"]
 
 
 def create_tts_engine(node: Optional[GpuNode] = None) -> Optional[TTSEngine]:
@@ -32,11 +35,14 @@ def create_tts_engine(node: Optional[GpuNode] = None) -> Optional[TTSEngine]:
         "timeout": TTS_TIMEOUT_SEC,
         "max_concurrency": TTS_MAX_CONCURRENCY,
     }
+    engine: TTSEngine
     if TTS_ENGINE == "pyramid":
-        return PyramidVideoTTS(gpu, port=VOICESTUDIO_PORT, **common)
-    if TTS_ENGINE == "voicestudio":
-        return VoiceStudioTTS(
+        engine = PyramidVideoTTS(gpu, port=VOICESTUDIO_PORT, **common)
+    elif TTS_ENGINE == "voicestudio":
+        engine = VoiceStudioTTS(
             gpu, port=VOICESTUDIO_API_PORT, api_key=VOICESTUDIO_API_KEY,
             num_step=TTS_NUM_STEP, speed=TTS_SPEED, **common,
         )
-    raise ValueError(f"TTS_ENGINE không hợp lệ: {TTS_ENGINE!r}")
+    else:
+        raise ValueError(f"TTS_ENGINE không hợp lệ: {TTS_ENGINE!r}")
+    return CachedTTSEngine(engine, int(TTS_CACHE_MAX_MB * 1024 * 1024)) if TTS_CACHE else engine

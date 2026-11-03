@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from app.comments.filters import normalize_text
+from app.comments.intents import GREETING_ANCHORS
 from app.config import (
     AGENT_PROMPT_FILE,
     COMMENT_CONTEXT_FILE,
@@ -160,7 +161,8 @@ class RelevanceScorer:
         self.enabled = bool(enabled and embedder is not None and self._passages)
         self._ready = False
         self._vectors: list[tuple[float, ...]] = []
-        self._cache: OrderedDict[str, float] = OrderedDict()
+        self._greeting_vectors: list[tuple[float, ...]] = []
+        self._cache: OrderedDict[str, tuple[float, tuple[float, ...]]] = OrderedDict()
         self._failures = 0
         self._breaker_until = 0.0
         self._counts = {"similarity": 0, "heuristic": 0, "timeout": 0, "error": 0}
@@ -214,17 +216,20 @@ class RelevanceScorer:
                 continue
             started = time.perf_counter()
             try:
+                texts = self._passages + list(GREETING_ANCHORS)
                 vectors = await asyncio.wait_for(
-                    self._embed(self._passages), timeout=max(30.0, self.timeout_sec)
+                    self._embed(texts), timeout=max(30.0, self.timeout_sec)
                 )
-                if len(vectors) != len(self._passages):
+                if len(vectors) != len(texts):
                     raise ValueError("Số embedding context không khớp số passage.")
-                self._vectors = [_unit(vector) for vector in vectors]
+                split = len(self._passages)
+                self._vectors = [_unit(vector) for vector in vectors[:split]]
+                self._greeting_vectors = [_unit(vector) for vector in vectors[split:]]
                 if len({len(vector) for vector in self._vectors}) != 1:
                     raise ValueError("Kích thước embedding giữa các passage không khớp.")
                 self._ready = True
                 self._success(started)
-                logger.info("Comment relevance sẵn sàng: %s passages, model=%s.", len(vectors), self.model)
+                logger.info("Comment relevance sẵn sàng: %s passages, model=%s.", split, self.model)
             except asyncio.CancelledError:
                 raise
             except asyncio.TimeoutError:
@@ -236,14 +241,19 @@ class RelevanceScorer:
                 await asyncio.sleep(self.retry_sec)
 
     async def similarity(self, text: str) -> float | None:
+        result, _ = await self.analyze(text)
+        return result
+
+    async def analyze(self, text: str) -> tuple[float | None, tuple[float, ...] | None]:
+        """Trả similarity và unit vector từ đúng một request embedding cho comment."""
         if not self.ready or self._clock() < self._breaker_until:
-            return None
+            return None, None
         key = normalize_text(text)
         if key in self._cache:
-            result = self._cache.pop(key)
-            self._cache[key] = result
+            cached = self._cache.pop(key)
+            self._cache[key] = cached
             self._counts["similarity"] += 1
-            return result
+            return cached
         started = time.perf_counter()
         try:
             vectors = await asyncio.wait_for(self._embed([text]), timeout=self.timeout_sec)
@@ -255,10 +265,11 @@ class RelevanceScorer:
             result = max(sum(a * b for a, b in zip(vector, passage)) for passage in self._vectors)
             self._success(started)
             self._counts["similarity"] += 1
-            self._cache[key] = result
+            cached = (result, vector)
+            self._cache[key] = cached
             while len(self._cache) > self.cache_size:
                 self._cache.popitem(last=False)
-            return result
+            return cached
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:
@@ -267,7 +278,11 @@ class RelevanceScorer:
         except Exception:
             self._failure("error")
             logger.debug("Embedding comment thất bại.", exc_info=True)
-        return None
+        return None, None
+
+    @property
+    def greeting_vectors(self) -> tuple[tuple[float, ...], ...]:
+        return tuple(self._greeting_vectors)
 
     def _schedule_rewarm(self) -> None:
         # Ollama nhả model sau keep_alive; lần nạp lại mất vài giây, vượt timeout của từng comment.

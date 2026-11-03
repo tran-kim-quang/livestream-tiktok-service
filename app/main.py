@@ -16,6 +16,8 @@ from app.api import comments as comments_api
 from app.api import live, meta, queue, tts
 from app.agent import OpenAICompatLLM, LiveAgent, default_system_prompt
 from app.agent.loop import auto_reply_loop
+from app.agent.scheduler import ReplyScheduler
+from app.agent.templates import ThanksBatcher
 from app.audio.player import LocalAudioPlayer, create_player
 from app.comments import AudienceTracker, CommentBuffer, OllamaEmbedder, RelevanceScorer
 from app.config import (
@@ -95,13 +97,16 @@ async def lifespan(app: FastAPI):
     ) if COMMENT_RELEVANCE else None
     relevance = RelevanceScorer(embedder, enabled=COMMENT_RELEVANCE)
     comments = CommentBuffer(relevance=relevance, audience=audience)
+    thanks_batcher = ThanksBatcher()
 
     async def handle_gift(payload: dict[str, Any]) -> None:
         await audience.handle_gift(payload)
+        thanks_batcher.handle_gift(payload)
         await comments.notify_priority_changed()
 
     async def handle_follow(payload: dict[str, Any]) -> None:
         await audience.handle_follow(payload)
+        thanks_batcher.handle_follow(payload)
         await comments.notify_priority_changed()
 
     hub = LiveStreamHub(
@@ -124,6 +129,7 @@ async def lifespan(app: FastAPI):
         app.state.tts = engine
         app.state.agent = None
         app.state.audio_player = None
+        app.state.scheduler = None
 
         need_player = (
             AGENT_LOCAL_PLAYBACK and AGENT_AUTO and AGENT_AUTO_SPEAK
@@ -166,6 +172,9 @@ async def lifespan(app: FastAPI):
             )
             app.state.agent = agent
             if AGENT_AUTO:
+                scheduler = ReplyScheduler(comments, thanks_batcher)
+                app.state.scheduler = scheduler
+                agent.scheduler = scheduler
                 auto_speak = AGENT_AUTO_SPEAK and engine is not None
                 if AGENT_AUTO_SPEAK and engine is None:
                     logger.warning(
@@ -180,6 +189,7 @@ async def lifespan(app: FastAPI):
                     skip_when_no_listener=AGENT_SKIP_WHEN_NO_LISTENER,
                     reply_gap_sec=AGENT_REPLY_GAP_SEC,
                     played_ack_grace_sec=AGENT_PLAYED_ACK_GRACE_SEC,
+                    scheduler=scheduler,
                     player=(
                         audio_player
                         if AGENT_LOCAL_PLAYBACK and auto_speak else None

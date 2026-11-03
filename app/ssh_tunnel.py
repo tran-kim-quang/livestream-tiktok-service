@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any
 
 import asyncssh
@@ -24,6 +25,7 @@ class SshTunnel:
         self._listener: Any = None
         self._lock = asyncio.Lock()
         self._warned_known_hosts = False
+        self._warned_missing_key = False
 
     @property
     def base_url(self) -> str:
@@ -53,8 +55,15 @@ class SshTunnel:
                 "known_hosts": known_hosts,
                 "keepalive_interval": 15,
             }
-            if self.node.ssh_key_path:
+            if self.node.ssh_key_path and os.path.isfile(self.node.ssh_key_path):
                 options["client_keys"] = [self.node.ssh_key_path]
+            elif self.node.ssh_key_path and not self._warned_missing_key:
+                # Docker tạo thư mục rỗng khi file key trên host không tồn tại → dùng password.
+                logger.warning(
+                    "GPU_SSH_KEY %s không phải file key; bỏ qua và dùng GPU_SSH_PASSWORD (nếu có).",
+                    self.node.ssh_key_path,
+                )
+                self._warned_missing_key = True
             if self.node.ssh_password:
                 options["password"] = self.node.ssh_password
             try:
